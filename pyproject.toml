@@ -1,0 +1,43 @@
+[tool.poetry]
+name = "ImplicitPSF"
+version = "0.1.0"
+description = ""
+authors = ["Jeffrey Regier <regier@umich.edu>"]
+package-mode = false
+
+[tool.poetry.dependencies]
+python = "^3.10"
+torch = "*"
+numpy = "*"
+scipy = "*"
+matplotlib = "*"
+torchdiffeq = "*"
+pytorch-lightning = "*"
+einops = "^0.8.1"
+torchvision = "^0.22.1"
+hydra-core = "*"
+hydra-optuna-sweeper = "*"
+omegaconf = "*"
+lightning = {extras = ["extra"], version = "^2.5.2"}
+
+
+[tool.poetry.group.dev.dependencies]
+pre-commit = "^4.2.0"
+isort = "^6.0.1"
+pylint = "^3.3.7"
+flake8 = "^7.3.0"
+darglint = "^1.8.1"
+black = "^25.1.0"
+pre-commit-hooks = "^5.0.0"
+
+[tool.black]
+line-length = 100
+target-version = ['py310']
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
