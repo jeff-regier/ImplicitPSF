@@ -12,27 +12,30 @@ def main():
 
     # Create data module for PSF training (single centered stars)
     datamodule = StarDataModule(
-        n_samples=256,
+        n_samples=4096 * 4,
         image_size=10000,
-        max_sources=1024,
-        mean_sources=1024,
-        min_sources=1024,
-        patch_size=8,  # Match the expected image_size
+        max_sources=256,
+        mean_sources=256,
+        min_sources=256,
+        patch_size=8,
         as_patches=True,
-        batch_size=1,
+        batch_size=4,
         sigma=0.8,
         seed=42,
         background_intensity=1.0,
-        shot_noise=True,
+        shot_noise=False,
+        variable_psf=True,
     )
 
     # Create model
     model = ImplicitPSF(
         image_size=8,
+        full_image_size=10000,  # Full survey image size for position encoding
         background_level=1.0,
         hidden_dim=256,
-        n_layers=6,
+        n_heads=4,
         learning_rate=3e-4,
+        use_attention=True,  # Test attention mode
     )
 
     # Trainer with checkpointing enabled
