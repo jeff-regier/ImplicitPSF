@@ -39,7 +39,6 @@ class StarParamsDistribution(torch.distributions.Distribution):
         image_size,
         margin,
         min_sources=0,
-        center_sources=False,
         validate_args=None,
     ):
         super().__init__(validate_args=validate_args)
@@ -49,7 +48,6 @@ class StarParamsDistribution(torch.distributions.Distribution):
         self.min_sources = min_sources
         self.image_size = image_size
         self.margin = margin
-        self.center_sources = center_sources
         self.flux_dist = torch.distributions.Uniform(1000.0, 2000.0)
 
     def sample(self, sample_shape=torch.Size(), generator=None):
@@ -59,18 +57,10 @@ class StarParamsDistribution(torch.distributions.Distribution):
 
         dims = (self.n_images, self.max_sources)
 
-        if self.center_sources:
-            # Generate positions within 0.5 pixels of center (origin in astronomical coords)
-            # L_infinity norm: each coordinate independently within [-0.5+eps, 0.5-eps] for stability
-            positions = (torch.rand(dims + (2,), generator=generator) - 0.5) * (
-                1.0 - 2e-6
-            )  # each coord in [-0.5+1e-6, 0.5-1e-6]
-            positions += self.image_size / 2
-        else:
-            # objected positions within the image are from [-0.5, to image_size - 0.5]
-            positions = torch.rand(dims + (2,), generator=generator) * self.image_size - 0.5
-            # avoid potential weird boundary issues
-            positions = positions.clamp(-0.5 + 1e-6, self.image_size - 0.5 - 1e-6)
+        # objected positions within the image are from [-0.5, to image_size - 0.5]
+        positions = torch.rand(dims + (2,), generator=generator) * self.image_size - 0.5
+        # avoid potential weird boundary issues
+        positions = positions.clamp(-0.5 + 1e-6, self.image_size - 0.5 - 1e-6)
 
         unit_fluxes = torch.rand(dims, generator=generator)
         fluxes = self.flux_dist.low + (self.flux_dist.high - self.flux_dist.low) * unit_fluxes
@@ -101,6 +91,7 @@ class StarImageDistribution(torch.distributions.Distribution):
         sigma=0.5,
         background_intensity=1.0,
         shot_noise=True,
+        patches_only=False,
         validate_args=None,
     ):
         super().__init__(validate_args=validate_args)
@@ -110,6 +101,7 @@ class StarImageDistribution(torch.distributions.Distribution):
         self.sigma = sigma
         self.background_intensity = background_intensity
         self.shot_noise = shot_noise
+        self.patches_only = patches_only
 
     def _render_patches(self):
         """Render patches for each star in the catalog."""
@@ -132,14 +124,23 @@ class StarImageDistribution(torch.distributions.Distribution):
         star_patch_x = patch_center + (fractional_offsets[..., 0] - 0.5)
         star_patch_y = patch_center + (fractional_offsets[..., 1] - 0.5)
 
+        # Spatially varying sigma: varies 3x from left (x=0) to right (x=image_size)
+        # sigma_varying = sigma * (1 + 2 * x_position / image_size)
+        # This gives sigma at x=0, and 3*sigma at x=image_size
+        # Use original image coordinates (not patch coordinates) for PSF variation
+        star_x_positions = self.catalog.positions[..., 0]  # x coordinates in ORIGINAL image
+        sigma_multiplier = 1.0 + 2.0 * star_x_positions / self.image_size  # 1.0 to 3.0
+        spatially_varying_sigma = self.sigma * sigma_multiplier  # shape: (n_images, max_sources)
+
         x_pos_exp = star_patch_x[..., None, None]
         y_pos_exp = star_patch_y[..., None, None]
         fluxes_exp = self.catalog.fluxes[..., None, None]
+        sigma_exp = spatially_varying_sigma[..., None, None]  # Expand for broadcasting
         X_exp = X[None, None, :, :]
         Y_exp = Y[None, None, :, :]
         dx = X_exp - x_pos_exp
         dy = Y_exp - y_pos_exp
-        sigma2 = self.sigma**2
+        sigma2 = sigma_exp**2
         norm = 1.0 / (2.0 * torch.pi * sigma2)
         exp_term = torch.exp(-0.5 * (dx**2 + dy**2) / sigma2)
         star_probs = norm * exp_term
@@ -223,23 +224,35 @@ class StarImageDistribution(torch.distributions.Distribution):
     def sample(self, sample_shape=torch.Size(), generator=None):
         """Generate an image by rendering stars with Gaussian PSF and shot noise."""
         patches = self._render_patches()
-        expected_images = self.render_expected_images()
 
-        # add noise
-        expected_nelecs = expected_images * self.N_ELEC_PER_NMGY
-        if self.shot_noise:
-            standard_noise = torch.normal(
-                mean=0.0, std=1.0, size=expected_nelecs.shape, generator=generator
-            )
-            observed_nelecs = expected_nelecs + standard_noise * expected_nelecs.sqrt()
+        if self.patches_only:
+            # Only return patches with background and noise
+            expected_patches = patches + self.background_intensity
+            expected_nelecs = expected_patches * self.N_ELEC_PER_NMGY
+            if self.shot_noise:
+                standard_noise = torch.normal(
+                    mean=0.0, std=1.0, size=expected_nelecs.shape, generator=generator
+                )
+                observed_nelecs = expected_nelecs + standard_noise * expected_nelecs.sqrt()
+            else:
+                observed_nelecs = expected_nelecs
+            observed_patches = observed_nelecs / self.N_ELEC_PER_NMGY
+            return observed_patches, patches
         else:
-            observed_nelecs = expected_nelecs
-        observed_image = observed_nelecs / self.N_ELEC_PER_NMGY
+            # Return full images as before
+            expected_images = self.render_expected_images()
+            expected_nelecs = expected_images * self.N_ELEC_PER_NMGY
+            if self.shot_noise:
+                standard_noise = torch.normal(
+                    mean=0.0, std=1.0, size=expected_nelecs.shape, generator=generator
+                )
+                observed_nelecs = expected_nelecs + standard_noise * expected_nelecs.sqrt()
+            else:
+                observed_nelecs = expected_nelecs
+            observed_image = observed_nelecs / self.N_ELEC_PER_NMGY
+            return observed_image, patches
 
-        return observed_image, patches
 
-
-# ----- PyTorch Lightning Data Module -----
 class StarDataModule(pl.LightningDataModule):
     """PyTorch Lightning data module for star data."""
 
@@ -254,7 +267,7 @@ class StarDataModule(pl.LightningDataModule):
         sigma=0.5,
         background_intensity=1.0,
         shot_noise=True,
-        center_sources=False,
+        as_patches=False,
         batch_size=1,
         seed=42,
     ):
@@ -265,7 +278,7 @@ class StarDataModule(pl.LightningDataModule):
         self.mean_sources = mean_sources
         self.min_sources = min_sources
         self.shot_noise = shot_noise
-        self.center_sources = center_sources
+        self.as_patches = as_patches
 
         # StarImageDistribution parameters
         self.image_size = image_size
@@ -289,7 +302,6 @@ class StarDataModule(pl.LightningDataModule):
             min_sources=self.min_sources,
             image_size=self.image_size,
             margin=self.patch_size // 2,
-            center_sources=self.center_sources,
         )
         catalog = star_params_dist.sample(generator=g)
 
@@ -300,11 +312,27 @@ class StarDataModule(pl.LightningDataModule):
             patch_size=self.patch_size,
             sigma=self.sigma,
             background_intensity=self.background_intensity,
+            patches_only=self.as_patches,
         )
-        images, _patches = image_dist.sample(generator=g)
+        images, patches = image_dist.sample(generator=g)
 
         # Create dataset with tensors only
-        dataset = TensorDataset(images, catalog.fluxes, catalog.positions)
+        if self.as_patches:
+            # images is now processed patches with background and noise
+            processed_patches = images
+
+            # Convert positions from image coordinates to patch-relative coordinates
+            # The patches are created by centering around each star, so we need to compute
+            # where the star is within its own patch
+            array_positions = catalog.positions + 0.5  # Convert to array coordinates
+            patch_corners = array_positions.floor()  # Patch corner positions
+            fractional_offsets = array_positions - patch_corners  # Star position within patch
+            patch_center = self.patch_size // 2 - 0.5  # 3.5 for 8x8 patch
+            patch_positions = patch_center + (fractional_offsets - 0.5)
+
+            dataset = TensorDataset(processed_patches, catalog.fluxes, patch_positions)
+        else:
+            dataset = TensorDataset(images, catalog.fluxes, catalog.positions)
 
         # Use a fixed generator for random_split
         train_size = int(0.9 * len(dataset))

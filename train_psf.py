@@ -12,13 +12,14 @@ def main():
 
     # Create data module for PSF training (single centered stars)
     datamodule = StarDataModule(
-        n_samples=2048 * 16 * 8,
-        image_size=8,
-        max_sources=1,
-        mean_sources=1,
-        min_sources=1,
-        center_sources=True,
-        batch_size=1024,
+        n_samples=256,
+        image_size=10000,
+        max_sources=1024,
+        mean_sources=1024,
+        min_sources=1024,
+        patch_size=8,  # Match the expected image_size
+        as_patches=True,
+        batch_size=1,
         sigma=0.8,
         seed=42,
         background_intensity=1.0,

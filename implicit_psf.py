@@ -117,6 +117,17 @@ class ImplicitPSF(pl.LightningModule):
         """
         images, fluxes, positions = batch
 
+        # Handle patch format: flatten one dimension (batch_size, max_sources, h, w) -> (batch_size * max_sources, h, w)
+        if len(images.shape) == 4 and len(fluxes.shape) == 2:
+            batch_size, max_sources = images.shape[:2]
+            images = rearrange(images, "b n h w -> (b n) h w")
+            fluxes = rearrange(fluxes, "b n -> (b n)")
+            positions = rearrange(positions, "b n d -> (b n) d")
+            # Add channel dimension and expand positions to expected format
+            images = rearrange(images, "b h w -> b 1 h w")
+            fluxes = rearrange(fluxes, "b -> b 1")
+            positions = rearrange(positions, "b d -> b 1 d")
+
         # Get predictions from LIIF
         pred_images = self(positions)
 
