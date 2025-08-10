@@ -30,3 +30,4 @@ multirun
 inference_visualizations/
 outputs/
 checkpoints/
+*.ckpt

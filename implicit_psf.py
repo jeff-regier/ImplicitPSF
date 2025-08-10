@@ -2,7 +2,7 @@ import pytorch_lightning as pl
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from einops import rearrange, repeat
+from einops import rearrange
 
 
 class PSFDecoder(nn.Module):
@@ -14,11 +14,13 @@ class PSFDecoder(nn.Module):
         self.image_size = image_size
         self.use_features = use_features
 
-        # MLP input size depends on whether we use features
-        if use_features:
-            mlp_input_size = hidden_dim + 2 + 2  # attention + center + pixel_coords
-        else:
-            mlp_input_size = 2 + 2  # center + pixel_coords only
+        mlp_input_size = hidden_dim * 2 if use_features else hidden_dim
+
+        self.coord_embedding = nn.Sequential(
+            nn.Linear(2, hidden_dim),
+            nn.ReLU(inplace=True),
+            nn.Linear(hidden_dim, hidden_dim),
+        )
 
         # MLP to generate PSF values
         self.pixel_mlp = nn.Sequential(
@@ -28,55 +30,21 @@ class PSFDecoder(nn.Module):
             nn.ReLU(inplace=True),
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(inplace=True),
-            nn.Linear(hidden_dim, 1),
+            nn.Linear(hidden_dim, image_size**2),
+            nn.Softplus(),  # Ensure nonnegative flux
         )
 
-        # Precompute pixel coordinate grid
-        pixel_coords = torch.arange(image_size, dtype=torch.float32)
-        y_coords, x_coords = torch.meshgrid(pixel_coords, pixel_coords, indexing="ij")
-        coords_grid = torch.stack([x_coords, y_coords], dim=-1)
-        self.register_buffer("coords_grid", coords_grid)
-
-    def _create_pixel_coordinates(self, star_positions):
-        """Create pixel coordinates relative to star positions."""
-        batch_size = star_positions.shape[0]
-        coords = repeat(self.coords_grid, "h w xy -> b h w xy", b=batch_size)
-        star_array_coords = rearrange(star_positions, "b 1 xy -> b 1 1 xy")
-        relative_coords = coords - star_array_coords
-        return relative_coords
-
-    def forward(self, target_features, target_centers):
+    def forward(self, star_centers, attn_features):
         """Generate PSF images from attention features and star centers."""
-        target_positions_for_coords = target_centers.unsqueeze(1)
-        coords = self._create_pixel_coordinates(target_positions_for_coords)
-        coords_flat = rearrange(coords, "b h w d -> (b h w) d")
+        mlp_input = self.coord_embedding(star_centers - 3.5)
 
-        target_centers_expanded = repeat(
-            target_centers, "b d -> (b h w) d", h=self.image_size, w=self.image_size
+        if attn_features is not None:
+            mlp_input = torch.cat([mlp_input, attn_features], dim=-1)
+
+        pred_psf_flat = self.pixel_mlp(mlp_input)
+        return rearrange(
+            pred_psf_flat, "b s (h w) -> b s h w", h=self.image_size, w=self.image_size
         )
-
-        if target_features is not None:
-            # Include target features (attention case)
-            target_features_expanded = repeat(
-                target_features, "b d -> (b h w) d", h=self.image_size, w=self.image_size
-            )
-            psf_input = torch.cat(
-                [target_features_expanded, target_centers_expanded, coords_flat], dim=-1
-            )
-            batch_size = target_features.shape[0]
-        else:
-            # No target features (coordinate-only case)
-            psf_input = torch.cat([target_centers_expanded, coords_flat], dim=-1)
-            batch_size = target_centers.shape[0]
-
-        pred_values = self.pixel_mlp(psf_input)
-        pred_values = F.softplus(pred_values)
-
-        pred_psfs = rearrange(
-            pred_values, "(b h w) 1 -> b h w", b=batch_size, h=self.image_size, w=self.image_size
-        )
-
-        return pred_psfs
 
 
 class ImplicitPSF(pl.LightningModule):
@@ -204,21 +172,12 @@ class ImplicitPSF(pl.LightningModule):
             # Single attention layer with mask
             attn_output, _ = self.attention_layer(queries, keys, values, attn_mask=mask)
             attended_features = self.attention_norm(attn_output)
-
-            # Flatten for PSF decoder
-            target_features = rearrange(attended_features, "b s d -> (b s) d")
         else:
             # Non-attention approach: no learned features, just use coordinate-based MLP
-            target_features = None
-
-        # Get target centers - just flatten the star_centers
-        target_centers = rearrange(star_centers, "b s d -> (b s) d")
+            attended_features = None
 
         # Use PSF decoder to generate images
-        pred_psfs_flat = self.psf_decoder(target_features, target_centers)
-        pred_psfs = rearrange(pred_psfs_flat, "(b s) h w -> b s h w", b=batch_size, s=n_stars)
-
-        return pred_psfs
+        return self.psf_decoder(star_centers, attended_features)
 
     def _generic_step(self, batch, batch_idx, stage):
         star_images, star_fluxes, star_centers = batch

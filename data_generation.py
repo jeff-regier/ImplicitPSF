@@ -92,7 +92,6 @@ class StarImageDistribution(torch.distributions.Distribution):
         background_intensity=1.0,
         shot_noise=True,
         patches_only=False,
-        psf_gradient_angle=0.0,  # Angle in radians for PSF gradient direction
         variable_psf=True,  # Flag to enable/disable variable PSF
         validate_args=None,
     ):
@@ -105,7 +104,6 @@ class StarImageDistribution(torch.distributions.Distribution):
         self.shot_noise = shot_noise
         self.patches_only = patches_only
         self.variable_psf = variable_psf
-        self.psf_gradient_angle = psf_gradient_angle
 
     def _render_patches(self):
         """Render patches for each star in the catalog."""
@@ -130,35 +128,15 @@ class StarImageDistribution(torch.distributions.Distribution):
 
         # Handle PSF variation based on flag
         if self.variable_psf:
-            # Spatially varying sigma: varies 3x along a gradient direction
-            # Use original image coordinates (not patch coordinates) for PSF variation
+            # Simple left/right PSF variation based on x-coordinate
             star_positions = self.catalog.positions  # Shape: (n_images, max_sources, 2)
+            x_positions = star_positions[..., 0]  # Extract x coordinates
 
-            # Create gradient direction vector
-            cos_angle = torch.cos(torch.tensor(self.psf_gradient_angle))
-            sin_angle = torch.sin(torch.tensor(self.psf_gradient_angle))
-            gradient_dir = torch.tensor([cos_angle, sin_angle], device=self.catalog.device)  # (2,)
-
-            # Project star positions onto gradient direction
-            # positions range from [0, image_size] in each dimension
-            # Center coordinates around image center for symmetric gradient
-            centered_positions = star_positions - self.image_size / 2.0  # Center at origin
-            projected_positions = torch.sum(
-                centered_positions * gradient_dir, dim=-1
-            )  # (n_images, max_sources)
-
-            # Normalize to [0, 1] range: max projection is image_size/sqrt(2) for diagonal
-            max_projection = self.image_size / (2.0 * torch.sqrt(torch.tensor(2.0)))
-            normalized_projection = (
-                projected_positions / max_projection + 1.0
-            ) / 2.0  # [-1,1] -> [0,1]
-            normalized_projection = torch.clamp(normalized_projection, 0.0, 1.0)
-
-            # Apply 3x variation: 1.0 to 3.0
-            sigma_multiplier = 1.0 + 2.0 * normalized_projection  # 1.0 to 3.0
-            spatially_varying_sigma = (
-                self.sigma * sigma_multiplier
-            )  # shape: (n_images, max_sources)
+            # Stars in left half (x < image_size/2) get sigma
+            # Stars in right half (x >= image_size/2) get 3*sigma
+            is_right_half = x_positions >= (self.image_size / 2.0)
+            sigma_multiplier = torch.where(is_right_half, 3.0, 1.0)
+            spatially_varying_sigma = self.sigma * sigma_multiplier
         else:
             # Fixed PSF: same sigma for all stars
             # Create tensor with same shape as variable case
@@ -340,11 +318,6 @@ class StarDataModule(pl.LightningDataModule):
         )
         catalog = star_params_dist.sample(generator=g)
 
-        # Generate random PSF gradient angle for this dataset
-        psf_gradient_angle = (
-            torch.rand(1, generator=g).item() * 2.0 * torch.pi
-        )  # Random angle [0, 2π]
-
         # Generate images from star parameters
         image_dist = StarImageDistribution(
             catalog=catalog,
@@ -353,7 +326,6 @@ class StarDataModule(pl.LightningDataModule):
             sigma=self.sigma,
             background_intensity=self.background_intensity,
             patches_only=self.as_patches,
-            psf_gradient_angle=psf_gradient_angle,
             variable_psf=self.variable_psf,
         )
         images, patches = image_dist.sample(generator=g)
@@ -385,10 +357,10 @@ class StarDataModule(pl.LightningDataModule):
 
     def train_dataloader(self):
         return DataLoader(
-            self.train_dataset, batch_size=self.batch_size, shuffle=True, num_workers=4
+            self.train_dataset, batch_size=self.batch_size, shuffle=True, num_workers=0
         )
 
     def val_dataloader(self):
         return DataLoader(
-            self.val_dataset, batch_size=self.batch_size, shuffle=False, num_workers=4
+            self.val_dataset, batch_size=self.batch_size, shuffle=False, num_workers=0
         )

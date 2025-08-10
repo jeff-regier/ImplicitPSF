@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
 
+import warnings
+
+warnings.filterwarnings("ignore", ".*does not have many workers.*")
+
 import pytorch_lightning as pl
 import torch
 
@@ -20,7 +24,7 @@ def main():
         patch_size=8,
         as_patches=True,
         batch_size=4,
-        sigma=0.8,
+        sigma=0.5,
         seed=42,
         background_intensity=1.0,
         shot_noise=False,
@@ -34,8 +38,8 @@ def main():
         background_level=1.0,
         hidden_dim=256,
         n_heads=4,
-        learning_rate=3e-4,
-        use_attention=True,  # Test attention mode
+        learning_rate=1e-4,
+        use_attention=False,  # Test attention mode
     )
 
     # Trainer with checkpointing enabled
