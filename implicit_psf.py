@@ -141,7 +141,7 @@ class ImplicitPSF(pl.LightningModule):
 
         return encodings
 
-    def forward(self, star_images, star_centers):
+    def forward(self, star_images, star_centers, nonzero_mask=None):
         """Forward pass using attention."""
         batch_size, n_stars = star_images.shape[:2]
 
@@ -166,9 +166,17 @@ class ImplicitPSF(pl.LightningModule):
             keys = combined_features  # (batch_size, n_stars, hidden_dim) - what's available
             values = combined_features  # (batch_size, n_stars, hidden_dim) - what we get
 
-            # Create mask to prevent self-attention (star attending to itself)
-            device = pos_encodings.device
-            mask = torch.eye(n_stars, device=device, dtype=torch.bool)  # (n_stars, n_stars)
+            # Create mask to prevent self-attention and attention to padding sources
+            mask = torch.eye(
+                n_stars, device=pos_encodings.device, dtype=torch.bool
+            )  # (n_stars, n_stars)
+
+            # Also mask out padding sources (zero flux) from being attended to
+            if nonzero_mask is not None:
+                # Expand nonzero_mask to attention shape: (batch_size, n_stars) -> (n_stars, n_stars)
+                # We want to mask out columns (keys) where flux is zero
+                padding_mask = ~nonzero_mask[0]  # Assuming same mask across batch
+                mask = mask | padding_mask.unsqueeze(0)  # Broadcast to (n_stars, n_stars)
 
             # Single attention layer with mask
             attn_output, _ = self.attention_layer(queries, keys, values, attn_mask=mask)
@@ -182,9 +190,16 @@ class ImplicitPSF(pl.LightningModule):
 
     def _generic_step(self, batch, batch_idx, stage):
         star_images, star_fluxes, star_centers = batch
-        pred_psfs = self(star_images, star_centers)
+        nonzero_mask = star_fluxes > 0
+        pred_psfs = self(star_images, star_centers, nonzero_mask)
         pred_images = pred_psfs * star_fluxes.unsqueeze(-1).unsqueeze(-1) + self.background_level
-        loss = F.mse_loss(pred_images, star_images)
+
+        # Only compute loss for stars with nonzero flux
+        if nonzero_mask.any():
+            loss = F.mse_loss(pred_images[nonzero_mask], star_images[nonzero_mask])
+        else:
+            loss = torch.zeros(1, device=star_images.device, requires_grad=True)
+
         self.log(f"{stage}_loss", loss, prog_bar=True)
         return loss
 

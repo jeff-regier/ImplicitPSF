@@ -21,16 +21,16 @@ def main():
     datamodule = StarDataModule(
         n_samples=4096,
         image_size=image_size,
-        max_sources=256,
+        min_sources=128,
         mean_sources=256,
-        min_sources=256,
+        max_sources=512,
         patch_size=patch_size,
         as_patches=True,
         batch_size=4,
         sigma=0.5,
         seed=42,
         background_intensity=1.0,
-        shot_noise=False,
+        shot_noise=True,
         variable_psf=True,
     )
 
