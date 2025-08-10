@@ -36,7 +36,8 @@ class PSFDecoder(nn.Module):
 
     def forward(self, star_centers, attn_features):
         """Generate PSF images from attention features and star centers."""
-        mlp_input = self.coord_embedding(star_centers - 3.5)
+        subpixel_offset = (star_centers + 0.5) % 1 - 0.5  # varies within [-0.5, 0.5]
+        mlp_input = self.coord_embedding(subpixel_offset)
 
         if attn_features is not None:
             mlp_input = torch.cat([mlp_input, attn_features], dim=-1)
@@ -55,8 +56,8 @@ class ImplicitPSF(pl.LightningModule):
 
     def __init__(
         self,
-        image_size,
-        full_image_size=1000,  # Size of full survey image for position encoding
+        patch_size,
+        image_size,  # Size of full survey image for position encoding
         background_level=0.0,
         hidden_dim=256,
         n_heads=8,
@@ -68,8 +69,8 @@ class ImplicitPSF(pl.LightningModule):
         self.save_hyperparameters()
 
         # Model parameters
+        self.patch_size = patch_size
         self.image_size = image_size
-        self.full_image_size = full_image_size
         self.background_level = background_level
         self.hidden_dim = hidden_dim
         self.n_heads = n_heads
@@ -81,7 +82,7 @@ class ImplicitPSF(pl.LightningModule):
         # Image encoder - encode 8x8 star images to hidden dimension
         self.image_encoder = nn.Sequential(
             nn.Flatten(),  # 8x8 = 64 pixels
-            nn.Linear(image_size * image_size, hidden_dim),
+            nn.Linear(patch_size * patch_size, hidden_dim),
             nn.ReLU(inplace=True),
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(inplace=True),
@@ -94,7 +95,7 @@ class ImplicitPSF(pl.LightningModule):
             self.attention_norm = nn.LayerNorm(hidden_dim)
 
         # PSF decoder module
-        self.psf_decoder = PSFDecoder(hidden_dim, image_size, use_features=self.use_attention)
+        self.psf_decoder = PSFDecoder(hidden_dim, patch_size, use_features=self.use_attention)
 
         # Training parameters
         self.learning_rate = learning_rate
@@ -110,7 +111,7 @@ class ImplicitPSF(pl.LightningModule):
             pos_encodings: (batch_size, n_stars, pos_encoding_dim) sinusoidal encodings
         """
         # Normalize positions to [0, 1] range
-        normalized_pos = positions / self.full_image_size
+        normalized_pos = positions / self.image_size
 
         # Create frequency bands
         num_bands = self.pos_encoding_dim // 4  # 4 terms per band (sin/cos for x/y)

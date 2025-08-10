@@ -91,7 +91,7 @@ class StarImageDistribution(torch.distributions.Distribution):
         sigma=0.5,
         background_intensity=1.0,
         shot_noise=True,
-        patches_only=False,
+        as_patches=False,
         variable_psf=True,  # Flag to enable/disable variable PSF
         validate_args=None,
     ):
@@ -102,7 +102,7 @@ class StarImageDistribution(torch.distributions.Distribution):
         self.sigma = sigma
         self.background_intensity = background_intensity
         self.shot_noise = shot_noise
-        self.patches_only = patches_only
+        self.as_patches = as_patches
         self.variable_psf = variable_psf
 
     def _render_patches(self):
@@ -236,7 +236,7 @@ class StarImageDistribution(torch.distributions.Distribution):
         """Generate an image by rendering stars with Gaussian PSF and shot noise."""
         patches = self._render_patches()
 
-        if self.patches_only:
+        if self.as_patches:
             # Only return patches with background and noise
             expected_patches = patches + self.background_intensity
             expected_nelecs = expected_patches * self.N_ELEC_PER_NMGY
@@ -325,28 +325,11 @@ class StarDataModule(pl.LightningDataModule):
             patch_size=self.patch_size,
             sigma=self.sigma,
             background_intensity=self.background_intensity,
-            patches_only=self.as_patches,
+            as_patches=self.as_patches,
             variable_psf=self.variable_psf,
         )
-        images, patches = image_dist.sample(generator=g)
-
-        # Create dataset with tensors only
-        if self.as_patches:
-            # images is now processed patches with background and noise
-            processed_patches = images
-
-            # Convert positions from image coordinates to patch-relative coordinates
-            # The patches are created by centering around each star, so we need to compute
-            # where the star is within its own patch
-            array_positions = catalog.positions + 0.5  # Convert to array coordinates
-            patch_corners = array_positions.floor()  # Patch corner positions
-            fractional_offsets = array_positions - patch_corners  # Star position within patch
-            patch_center = self.patch_size // 2 - 0.5  # 3.5 for 8x8 patch
-            patch_positions = patch_center + (fractional_offsets - 0.5)
-
-            dataset = TensorDataset(processed_patches, catalog.fluxes, patch_positions)
-        else:
-            dataset = TensorDataset(images, catalog.fluxes, catalog.positions)
+        images, _true_patches = image_dist.sample(generator=g)
+        dataset = TensorDataset(images, catalog.fluxes, catalog.positions)
 
         # Use a fixed generator for random_split
         train_size = int(0.9 * len(dataset))

@@ -14,14 +14,17 @@ from implicit_psf import ImplicitPSF
 def main():
     pl.seed_everything(42)
 
+    image_size = 20
+    patch_size = 8
+
     # Create data module for PSF training (single centered stars)
     datamodule = StarDataModule(
-        n_samples=4096 * 4,
-        image_size=10000,
+        n_samples=4096,
+        image_size=image_size,
         max_sources=256,
         mean_sources=256,
         min_sources=256,
-        patch_size=8,
+        patch_size=patch_size,
         as_patches=True,
         batch_size=4,
         sigma=0.5,
@@ -33,13 +36,13 @@ def main():
 
     # Create model
     model = ImplicitPSF(
-        image_size=8,
-        full_image_size=10000,  # Full survey image size for position encoding
+        patch_size=patch_size,
+        image_size=image_size,  # Full survey image size for position encoding
         background_level=1.0,
         hidden_dim=256,
         n_heads=4,
         learning_rate=1e-4,
-        use_attention=False,  # Test attention mode
+        use_attention=True,  # Test attention mode
     )
 
     # Trainer with checkpointing enabled
