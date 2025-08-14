@@ -21,6 +21,7 @@ omegaconf = "*"
 lightning = {extras = ["extra"], version = "^2.5.2"}
 astropy = "^7.1.0"
 h5py = "^3.14.0"
+sep = "^1.4.1"
 
 
 [tool.poetry.group.dev.dependencies]

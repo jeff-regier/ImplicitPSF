@@ -94,6 +94,9 @@ class StarImageDistribution(torch.distributions.Distribution):
         as_patches=False,
         psf_gradient_angle=0.0,  # Angle in radians for PSF gradient direction
         variable_psf=True,  # Flag to enable/disable variable PSF
+        psf_model="gaussian",  # 'gaussian', 'moffat', 'des_synthetic', or 'des_real'
+        des_band="r",  # DES band for PSF model
+        psf_coefficients_file=None,  # Path to real PSF coefficients file
         validate_args=None,
     ):
         super().__init__(validate_args=validate_args)
@@ -106,9 +109,20 @@ class StarImageDistribution(torch.distributions.Distribution):
         self.as_patches = as_patches
         self.variable_psf = variable_psf
         self.psf_gradient_angle = psf_gradient_angle
+        self.psf_model = psf_model
+        self.des_band = des_band
+        self.psf_coefficients_file = psf_coefficients_file
+
+        # Store PSF model type for per-image PSF generation
+        # Don't initialize a single PSF model - we'll generate different ones per image
 
     def _render_patches(self):
         """Render patches for each star in the catalog."""
+        # Use new PSF models if specified
+        if self.psf_model in ["moffat", "des_synthetic", "des_real"]:
+            return self._render_realistic_psf_patches()
+
+        # Original Gaussian PSF implementation
         x_coords = torch.arange(self.patch_size, dtype=torch.float32, device=self.catalog.device)
         y_coords = torch.arange(self.patch_size, dtype=torch.float32, device=self.catalog.device)
         X, Y = torch.meshgrid(x_coords, y_coords, indexing="xy")
@@ -304,6 +318,9 @@ class StarDataModule(pl.LightningDataModule):
         batch_size=1,
         seed=42,
         variable_psf=True,  # Flag to enable/disable variable PSF
+        psf_model="gaussian",  # 'gaussian', 'moffat', 'des_synthetic', or 'des_real'
+        des_band="r",  # DES band for PSF model
+        psf_coefficients_file=None,  # Path to real PSF coefficients file
     ):
         super().__init__()
         # StarParamsDistribution parameters
@@ -320,6 +337,9 @@ class StarDataModule(pl.LightningDataModule):
         self.sigma = sigma
         self.background_intensity = background_intensity
         self.variable_psf = variable_psf
+        self.psf_model = psf_model
+        self.des_band = des_band
+        self.psf_coefficients_file = psf_coefficients_file
 
         # Data module parameters
         self.batch_size = batch_size
@@ -355,6 +375,9 @@ class StarDataModule(pl.LightningDataModule):
             as_patches=self.as_patches,
             psf_gradient_angle=psf_gradient_angle,
             variable_psf=self.variable_psf,
+            psf_model=self.psf_model,
+            des_band=self.des_band,
+            psf_coefficients_file=self.psf_coefficients_file,
         )
         images, _true_patches = image_dist.sample(generator=g)
         dataset = TensorDataset(images, catalog.fluxes, catalog.positions)
