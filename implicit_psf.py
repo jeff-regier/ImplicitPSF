@@ -141,7 +141,7 @@ class ImplicitPSF(pl.LightningModule):
 
         return encodings
 
-    def forward(self, star_images, star_centers, nonzero_mask=None):
+    def forward(self, star_images, star_centers, nonzero_mask=None, clean_mask=None):
         """Forward pass using attention."""
         batch_size, n_stars = star_images.shape[:2]
 
@@ -189,14 +189,16 @@ class ImplicitPSF(pl.LightningModule):
         return self.psf_decoder(star_centers, attended_features)
 
     def _generic_step(self, batch, batch_idx, stage):
-        star_images, star_fluxes, star_centers = batch
+        star_images, star_fluxes, star_centers, star_types = batch
         nonzero_mask = star_fluxes > 0
-        pred_psfs = self(star_images, star_centers, nonzero_mask)
+        clean_mask = (star_types == 0) & nonzero_mask  # Only clean stars with nonzero flux
+
+        pred_psfs = self(star_images, star_centers, nonzero_mask, clean_mask)
         pred_images = pred_psfs * star_fluxes.unsqueeze(-1).unsqueeze(-1) + self.background_level
 
-        # Only compute loss for stars with nonzero flux
-        if nonzero_mask.any():
-            loss = F.mse_loss(pred_images[nonzero_mask], star_images[nonzero_mask])
+        # Only compute loss for clean stars (all other stars are predictors only)
+        if clean_mask.any():
+            loss = F.mse_loss(pred_images[clean_mask], star_images[clean_mask])
         else:
             loss = torch.zeros(1, device=star_images.device, requires_grad=True)
 

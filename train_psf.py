@@ -7,31 +7,20 @@ warnings.filterwarnings("ignore", ".*does not have many workers.*")
 import pytorch_lightning as pl
 import torch
 
-from data_generation import StarDataModule
+from des_data_loader import DESDataModule
 from implicit_psf import ImplicitPSF
 
 
 def main():
     pl.seed_everything(42)
 
-    image_size = 20
-    patch_size = 8
+    image_size = 10000  # DES survey image size
+    patch_size = 32  # DES cutout size
 
-    # Create data module for PSF training (single centered stars)
-    datamodule = StarDataModule(
-        n_samples=4096,
-        image_size=image_size,
-        min_sources=128,
-        mean_sources=256,
-        max_sources=512,
-        patch_size=patch_size,
-        as_patches=True,
+    # Create data module for PSF training (real DES stars)
+    datamodule = DESDataModule(
         batch_size=4,
-        sigma=0.5,
         seed=42,
-        background_intensity=1.0,
-        shot_noise=True,
-        variable_psf=True,
     )
 
     # Create model
