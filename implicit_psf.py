@@ -188,8 +188,13 @@ class ImplicitPSF(pl.LightningModule):
         # Use PSF decoder to generate images
         return self.psf_decoder(star_centers, attended_features)
 
-    def _generic_step(self, batch, batch_idx, stage):
-        star_images, star_fluxes, star_centers, star_types = batch
+    def get_loss(self, batch):
+        # Expect batch as dictionary
+        star_images = batch["cutouts"]
+        star_fluxes = batch["flux"]
+        star_centers = batch["positions"]
+        star_types = batch["star_types"]
+
         nonzero_mask = star_fluxes > 0
         clean_mask = (star_types == 0) & nonzero_mask  # Only clean stars with nonzero flux
 
@@ -204,15 +209,3 @@ class ImplicitPSF(pl.LightningModule):
 
         # No logging needed - handled by custom training loop
         return loss
-
-    def training_step(self, batch, batch_idx):
-        return self._generic_step(batch, batch_idx, "train")
-
-    def validation_step(self, batch, batch_idx):
-        return self._generic_step(batch, batch_idx, "val")
-
-    def configure_optimizers(self):
-        optimizer = torch.optim.Adam(
-            self.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay
-        )
-        return {"optimizer": optimizer, "monitor": "val_loss"}
