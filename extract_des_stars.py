@@ -17,6 +17,7 @@ import h5py
 import numpy as np
 import pandas as pd
 import sep
+import torch
 from astropy.io import fits
 from astropy.wcs import WCS
 
@@ -87,7 +88,7 @@ def process_safe_print(*args, **kwargs):
 def worker_process_directories(process_id: int, directories_subset: list) -> dict:
     """
     Worker process function to process directories
-    Each process processes a subset of directories and writes to its own HDF5 files
+    Each process processes a subset of directories and writes to its own PyTorch files
     """
     # Disable verbosity for worker processes to reduce output noise
     CONFIG["verbose"] = False
@@ -147,15 +148,27 @@ def worker_process_directories(process_id: int, directories_subset: list) -> dic
 
                             # Check if we should save the current batch
                             if len(process_star_data) >= target_stars_per_file:
-                                batch_num = process_successful_files // 100
+                                # Use process_id and sequential batch counter to ensure uniqueness
+                                batch_counter = len(
+                                    list(
+                                        output_dir.glob(
+                                            f"des_psf_stars_process_{process_id:02d}_*.h5"
+                                        )
+                                    )
+                                )
+                                # Count unique exposures in this batch
+                                unique_exposures = set(
+                                    star["exposure_id"] for star in process_star_data
+                                )
+                                exposure_count = len(unique_exposures)
                                 output_file = (
                                     output_dir
-                                    / f"des_psf_stars_process_{process_id:02d}_batch_{batch_num:03d}.h5"
+                                    / f"desstars_process{process_id:02d}_file{batch_counter:03d}_exposures{exposure_count:03d}.pt"
                                 )
                                 process_safe_print(
-                                    f"💾 Process {process_id}: Saving 1GB batch with {len(process_star_data)} stars to {output_file}"
+                                    f"💾 Process {process_id}: Saving 1GB batch with {len(process_star_data)} stars ({exposure_count} exposures) to {output_file}"
                                 )
-                                save_batch_hdf5(process_star_data, str(output_file))
+                                save_batch_pytorch(process_star_data, str(output_file))
                                 process_star_data = []
 
                             # Start new exposure
@@ -197,14 +210,18 @@ def worker_process_directories(process_id: int, directories_subset: list) -> dic
         process_star_data.extend(current_exposure_stars)
 
     if len(process_star_data) > 0:
-        batch_num = process_successful_files // 100
+        batch_counter = len(list(output_dir.glob(f"desstars_process{process_id:02d}_*.pt")))
+        # Count unique exposures in final batch
+        unique_exposures = set(star["exposure_id"] for star in process_star_data)
+        exposure_count = len(unique_exposures)
         output_file = (
-            output_dir / f"des_psf_stars_process_{process_id:02d}_final_{batch_num:03d}.h5"
+            output_dir
+            / f"desstars_process{process_id:02d}_file{batch_counter:03d}_exposures{exposure_count:03d}.pt"
         )
         process_safe_print(
             f"💾 Process {process_id}: Saving final batch with {len(process_star_data)} stars to {output_file}"
         )
-        save_batch_hdf5(process_star_data, str(output_file))
+        save_batch_pytorch(process_star_data, str(output_file))
 
     final_progress_pct = (process_processed_dirs / len(directories_subset)) * 100
     process_safe_print(
@@ -1315,6 +1332,120 @@ def process_fits_file_quiet(fits_path: str) -> List[Dict]:
         else:
             process_safe_print(f"  ❌ Error processing {filename}: {str(e)[:100]}")
         return []
+
+
+def save_batch_pytorch(all_star_data: List[Dict], output_file: str):
+    """
+    Save all extracted star data to PyTorch file with exposure-based tensors (512, 32, 32)
+    """
+    if len(all_star_data) == 0:
+        print("❌ No star data to save")
+        return
+
+    # Group stars by exposure
+    exposure_groups = {}
+    for star in all_star_data:
+        exp_id = star["exposure_id"]
+        if exp_id not in exposure_groups:
+            exposure_groups[exp_id] = []
+        exposure_groups[exp_id].append(star)
+
+    # Verify each exposure has exactly 512 stars
+    target_count = CONFIG["stars_per_exposure"]
+    for exp_id, stars in exposure_groups.items():
+        if len(stars) != target_count:
+            print(f"⚠️ Warning: Exposure {exp_id} has {len(stars)} stars, expected {target_count}")
+
+    n_exposures = len(exposure_groups)
+    sorted_exp_ids = sorted(exposure_groups.keys())
+
+    # Create PyTorch tensors directly
+    patch_size = CONFIG["patch_size"]
+
+    # Initialize tensors with shape (n_exposures, 512, ...)
+    cutouts_tensor = torch.zeros(
+        (n_exposures, target_count, patch_size, patch_size), dtype=torch.float32
+    )
+    x_pixel_tensor = torch.zeros((n_exposures, target_count), dtype=torch.float32)
+    y_pixel_tensor = torch.zeros((n_exposures, target_count), dtype=torch.float32)
+    flux_tensor = torch.zeros((n_exposures, target_count), dtype=torch.float32)
+    ccd_num_tensor = torch.zeros((n_exposures, target_count), dtype=torch.uint8)
+
+    # String arrays for metadata (keep as numpy)
+    band_array = np.full((n_exposures, target_count), "", dtype="U1")
+    # Star types as integers: 0=clean, 1=predictor, 2=galaxy, 3=cosmic_ray, 4=padding
+    star_type_array = np.full((n_exposures, target_count), 4, dtype=np.uint8)  # Default to padding
+
+    # Exposure metadata arrays
+    exposure_ids = []
+    runs = []
+    proc_nums = []
+
+    # Fill tensors directly
+    for exp_idx, exp_id in enumerate(sorted_exp_ids):
+        stars = exposure_groups[exp_id]
+
+        # Store exposure metadata (from first star)
+        first_star = stars[0]
+        exposure_ids.append(first_star["exposure_id"])
+        runs.append(first_star["run"])
+        proc_nums.append(first_star["proc_num"])
+
+        # Fill star data directly into tensors (up to target_count)
+        star_type_encoding = {
+            "clean": 0,
+            "predictor": 1,
+            "galaxy": 2,
+            "cosmic_ray": 3,
+            "padding": 4,
+        }
+        for star_idx, star in enumerate(stars[:target_count]):
+            cutouts_tensor[exp_idx, star_idx] = torch.from_numpy(star["cutout"])
+            x_pixel_tensor[exp_idx, star_idx] = star["x_pixel"]
+            y_pixel_tensor[exp_idx, star_idx] = star["y_pixel"]
+            flux_tensor[exp_idx, star_idx] = star["flux"]
+            band_array[exp_idx, star_idx] = star["band"]
+            star_type_array[exp_idx, star_idx] = star_type_encoding.get(
+                star["star_type"], 4
+            )  # Convert to int
+            ccd_num_tensor[exp_idx, star_idx] = star["ccd_num"]
+
+    # Create final data structure
+    data = {
+        "cutouts": cutouts_tensor,
+        "x_pixel": x_pixel_tensor,
+        "y_pixel": y_pixel_tensor,
+        "flux": flux_tensor,
+        "band": band_array,  # Keep as numpy array for strings
+        "star_type": torch.from_numpy(star_type_array),  # Convert to tensor of uint8
+        "ccd_num": ccd_num_tensor,
+        "exposure_id": np.array(exposure_ids, dtype="U20"),
+        "run": np.array(runs, dtype="U10"),
+        "proc_num": np.array(proc_nums, dtype="U10"),
+        # Metadata
+        "metadata": {
+            "num_exposures": n_exposures,
+            "stars_per_exposure": target_count,
+            "patch_size": CONFIG["patch_size"],
+            "creation_time": time.time(),
+            "data_source": "DES_Local_SEP_Detection",
+            "detection_method": "SEP_Source_Extractor",
+            "config": {k: v for k, v in CONFIG.items() if isinstance(v, (int, float, str))},
+        },
+    }
+
+    # Save to PyTorch file
+    torch.save(data, output_file)
+
+    file_size_mb = Path(output_file).stat().st_size / (1024 * 1024)
+    total_stars = n_exposures * target_count
+    if CONFIG["verbose"]:
+        print(f"💾 Saved: {output_file}")
+        print(f"    {n_exposures} exposures × {target_count} stars = {total_stars} total entries")
+    else:
+        process_safe_print(
+            f"💾 Saved: {output_file} ({n_exposures} exposures, {file_size_mb:.1f} MB)"
+        )
 
 
 def save_batch_hdf5(all_star_data: List[Dict], output_file: str):

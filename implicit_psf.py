@@ -202,7 +202,7 @@ class ImplicitPSF(pl.LightningModule):
         else:
             loss = torch.zeros(1, device=star_images.device, requires_grad=True)
 
-        self.log(f"{stage}_loss", loss, prog_bar=True)
+        # No logging needed - handled by custom training loop
         return loss
 
     def training_step(self, batch, batch_idx):
