@@ -1,375 +1,253 @@
-#!/usr/bin/env python3
+"""Train ImplicitPSF on extracted DES stars with a producer/consumer batch queue.
 
-import contextlib
-import glob
+Exposure selection is driven by the frozen split manifest (see splits.py). One
+producer process loads .pt files and emits ready batches through a bounded queue;
+the consumer (this process) trains, validates, checkpoints, and logs per epoch.
+"""
+
+import argparse
+import csv
+import math
 import multiprocessing as mp
-import queue
 import random
+import shutil
 import time
-import warnings
 from pathlib import Path
 
-import numpy as np
 import torch
 from tqdm import tqdm
 
+from implicitpsf.datasets import BATCH_KEYS, load_exposure_file, make_batch, stable_seed
 from implicitpsf.implicit_psf import ImplicitPSF
+from implicitpsf.splits import files_for_split, load_manifest
 
-warnings.filterwarnings("ignore", ".*does not have many workers.*")
-warnings.filterwarnings("ignore", ".*IterableDataset.*has.*__len__.*defined.*")
-
-
-def get_file_exposure_count(file_path):
-    """Get actual exposure count from file data (filename pattern is unreliable)"""
-    try:
-        data = torch.load(file_path, weights_only=False)
-        return data["cutouts"].shape[0]  # First dimension is number of exposures
-    except Exception as e:
-        raise ValueError(f"Could not read exposure count from {file_path}: {e}") from e
+QUEUE_TIMEOUT_SECONDS = 600
 
 
-def compute_dataset_length(file_paths, batch_size):
-    """
-    Compute total number of batches by processing each file individually.
-    batch_size refers to number of exposures per batch.
-    """
-    total_batches = 0
-    for file_path in file_paths:
-        exposure_count = get_file_exposure_count(file_path)
-        file_batches = exposure_count // batch_size  # Only full batches
-        total_batches += file_batches
-    return total_batches
+def split_file_indices(manifest, split, band):
+    """Map file name -> exposure indices for a split, optionally one band."""
+    files = files_for_split(manifest, split)
+    if band is None:
+        return files
+    by_band = {}
+    for info in manifest["exposures"].values():
+        if info["split"] == split and info["band"] == band:
+            by_band.setdefault(info["file"], []).append(info["index"])
+    return {name: sorted(indices) for name, indices in sorted(by_band.items())}
 
 
-def process_file_batches(file_path, batch_size, phase, epoch, shuffle=False):
-    """Process a file into batches"""
-    # Load entire file - tensors are already in correct format
-    data = torch.load(file_path, weights_only=False)
-
-    # Get tensor data directly
-    cutouts = data["cutouts"]  # Shape: (n_exposures, 512, 32, 32)
-    flux = data["flux"]  # Shape: (n_exposures, 512)
-    x_pixel = data["x_pixel"]  # Shape: (n_exposures, 512)
-    y_pixel = data["y_pixel"]  # Shape: (n_exposures, 512)
-
-    # Create positions tensor
-    positions = torch.stack([x_pixel, y_pixel], dim=2)  # Shape: (n_exposures, 512, 2)
-
-    # Handle star types - should already be uint8 integers
-    star_types = data["star_type"]  # Already a tensor of uint8
-
-    n_exposures = cutouts.shape[0]
-
-    # Handle shuffling for training
+def file_batches(data_dir, file_name, indices, batch_size, phase, epoch, shuffle):
+    """Batches from one file, restricted to manifest-selected exposures."""
+    data = load_exposure_file(Path(data_dir) / file_name)
+    indices = list(indices)
     if shuffle:
-        epoch_seed = hash((file_path, epoch)) % (2**32)
-        exposure_random = random.Random(epoch_seed)
-        exposure_indices = list(range(n_exposures))
-        exposure_random.shuffle(exposure_indices)
-    else:
-        exposure_indices = list(range(n_exposures))
+        random.Random(stable_seed("exposures", file_name, epoch)).shuffle(indices)
 
-    # Create batches by slicing tensors
     batches = []
-    for batch_start in range(0, n_exposures, batch_size):
-        batch_end = min(batch_start + batch_size, n_exposures)
-
-        if batch_end - batch_start == batch_size:  # Only full batches
-            # Get indices for this batch
-            batch_indices = exposure_indices[batch_start:batch_end]
-
-            # Keep as CPU tensors for queue serialization
-            batch_serialized = {
-                "phase": phase,
-                "epoch": epoch,
-                "cutouts": cutouts[batch_indices].cpu(),  # (batch_size, 512, 32, 32)
-                "flux": flux[batch_indices].cpu(),  # (batch_size, 512)
-                "positions": positions[batch_indices].cpu(),  # (batch_size, 512, 2)
-                "star_types": star_types[batch_indices].cpu(),  # (batch_size, 512)
-            }
-            batches.append(batch_serialized)
-
+    for start in range(0, len(indices), batch_size):
+        batch = make_batch(data, indices[start : start + batch_size])
+        batch["phase"] = phase
+        batch["epoch"] = epoch
+        batches.append(batch)
     return batches
 
 
-def batch_producer(train_files, val_files, batch_size, max_epochs, batch_queue):
-    """Producer process with pipelined batch processing using single queue
+def count_batches(files, batch_size):
+    return sum(math.ceil(len(indices) / batch_size) for indices in files.values())
 
-    Queue Flow Control:
-    - Producer generates batches and puts them in the bounded queue (maxsize=64)
-    - When queue is full, producer BLOCKS on queue.put() until space is available
-    - Training loop (consumer) consumes batches with queue.get(), creating space
-    - This natural producer/consumer flow prevents memory overflow
-    - Producer stays slightly ahead of consumer, enabling efficient pipelining
+
+def batch_producer(
+    data_dir, train_files, val_files, batch_size, max_epochs, batch_queue, done_event
+):
+    """Producer process: emits all epochs' batches through the bounded queue.
+
+    Stays alive until the consumer sets done_event: queued tensors are shared by
+    file descriptor and become invalid if this process exits while they are in flight.
     """
-    # Generate complete training schedule for all epochs
-    # Note: Producer will automatically pause when queue fills up
     for epoch in range(max_epochs):
-        # TRAINING PHASE - put batches in queue
-        # Training: randomize file order each epoch
-        train_files_epoch = train_files.copy()
-        epoch_seed = hash((tuple(train_files), epoch)) % (2**32)
-        file_random = random.Random(epoch_seed)
-        file_random.shuffle(train_files_epoch)
-
-        for file_path in train_files_epoch:
-            # Process training file with shuffling
-            train_batches = process_file_batches(
-                file_path, batch_size, "train", epoch, shuffle=True
+        file_names = list(train_files)
+        random.Random(stable_seed("files", epoch)).shuffle(file_names)
+        for file_name in file_names:
+            batches = file_batches(
+                data_dir, file_name, train_files[file_name], batch_size, "train", epoch, True
             )
-
-            # Put all batches from this file into single queue
-            # Note: queue.put() will BLOCK if queue is full (natural flow control)
-            for batch in train_batches:
-                batch_queue.put(batch)  # Blocks when queue full, prevents overflow
-
-        # VALIDATION PHASE - put batches in same queue (pipelined)
-        for file_path in val_files:
-            # Process validation file without shuffling
-            val_batches = process_file_batches(file_path, batch_size, "val", epoch, shuffle=False)
-
-            # Put all batches from this file into same queue
-            # Same flow control applies to validation batches
-            for batch in val_batches:
-                batch_queue.put(batch)  # Blocks when queue full, prevents overflow
-
-    # Put end marker to signal completion
-    batch_queue.put({"signal": "producer_done"})
-
-    # Keep producer alive until explicitly told to stop
-    # This prevents tensor sharing file descriptors from becoming invalid
-    while True:
-        try:
-            # Check for shutdown signal with timeout
-            signal = batch_queue.get(timeout=1.0)
-            if signal.get("signal") == "shutdown":
-                break
-        except queue.Empty:
-            continue  # Keep waiting
-
-
-def setup_data_files(data_dir, file_pattern, max_files, train_split, seed):
-    """Set up train and validation file lists"""
-    print(f"Setting up DES data from {data_dir}...")
-
-    # Find PyTorch files with the specified pattern
-    pattern_path = str(Path(data_dir) / file_pattern)
-    all_files = sorted(glob.glob(pattern_path))
-
-    if not all_files:
-        raise FileNotFoundError(
-            f"No PyTorch files found in {data_dir} with pattern '{file_pattern}'"
-        )
-
-    if max_files:
-        all_files = all_files[:max_files]
-
-    print(f"Found {len(all_files)} PyTorch files")
-
-    # Split files between train and validation
-    np.random.seed(seed)
-    shuffled_files = np.random.permutation(all_files)
-
-    n_train_files = int(len(shuffled_files) * train_split)
-    train_files = shuffled_files[:n_train_files].tolist()
-    val_files = shuffled_files[n_train_files:].tolist()
-
-    print(f"Using {len(train_files)} files for training, {len(val_files)} files for validation")
-
-    return train_files, val_files
+            for batch in batches:
+                batch_queue.put(batch)
+        for file_name, indices in val_files.items():
+            for batch in file_batches(
+                data_dir, file_name, indices, batch_size, "val", epoch, False
+            ):
+                batch_queue.put(batch)
+    done_event.wait()
 
 
 def run_epoch_phase(model, optimizer, batch_queue, n_batches, phase, epoch, device):
     """Consume one epoch's worth of batches for a phase; train if an optimizer is given."""
-    desc = {"train": "Training", "val": "Validation"}[phase]
     losses = []
-
-    with tqdm(total=n_batches, desc=desc, ncols=120) as pbar:
+    with tqdm(total=n_batches, desc=f"{phase} {epoch}", ncols=120) as pbar:
         while len(losses) < n_batches:
-            try:
-                # Each get() creates space in the bounded queue for the producer to continue
-                batch_data = batch_queue.get(timeout=10)
-            except queue.Empty:
-                print(f"⚠️ Queue timeout during {phase} epoch {epoch}")
-                break
+            batch_data = batch_queue.get(timeout=QUEUE_TIMEOUT_SECONDS)
+            if batch_data["phase"] != phase or batch_data["epoch"] != epoch:
+                raise RuntimeError(f"out-of-order batch in {phase} epoch {epoch}")
 
-            # Handle producer completion signal
-            if isinstance(batch_data, dict) and batch_data.get("signal") == "producer_done":
-                print(f"⚠️ Producer finished early during {phase}")
-                break
-
-            # Skip if not a batch for this phase and epoch
-            if batch_data.get("phase") != phase or batch_data.get("epoch") != epoch:
-                print("⚠️ Skipping out-of-order batch: this should not happen!")
-                continue
-
-            tensor_keys = ("cutouts", "flux", "positions", "star_types")
-            batch = {key: batch_data[key].to(device) for key in tensor_keys}
+            batch = {key: batch_data[key].to(device) for key in BATCH_KEYS}
             loss = model.get_loss(batch)
-
             if optimizer is not None:
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
 
             losses.append(loss.item())
-            pbar.set_postfix({"loss": f"{loss.item():.1e}", "queue": batch_queue.qsize()})
+            pbar.set_postfix({"loss": f"{loss.item():.3e}", "queue": batch_queue.qsize()})
             pbar.update(1)
+    return sum(losses) / len(losses)
 
-    return losses
+
+def make_scheduler(optimizer, max_epochs, warmup_epochs=1):
+    """Cosine decay with linear warmup, stepped once per epoch."""
+
+    def schedule(epoch):
+        if epoch < warmup_epochs:
+            return (epoch + 1) / warmup_epochs
+        progress = (epoch - warmup_epochs) / max(1, max_epochs - warmup_epochs)
+        return 0.5 * (1 + math.cos(math.pi * progress))
+
+    return torch.optim.lr_scheduler.LambdaLR(optimizer, schedule)
 
 
-def run_training_loop(
-    model,
-    optimizer,
-    batch_queue,
-    max_epochs,
-    train_batches_per_epoch,
-    val_batches_per_epoch,
-    device,
-):
-    """Run the complete training and validation loop"""
-    print("Starting training...")
-    start_time = time.time()
+def save_checkpoint(model, optimizer, epoch, val_loss, out_dir):
+    path = Path(out_dir) / f"epoch_{epoch:03d}.pt"
+    torch.save(
+        {
+            "epoch": epoch,
+            "val_loss": val_loss,
+            "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "hyperparameters": dict(model.hparams),
+        },
+        path,
+    )
+    return path
 
-    train_losses = []
-    val_losses = []
 
-    for epoch in range(max_epochs):
-        print(f"\nEpoch {epoch + 1}/{max_epochs}")
-
-        # Training phase
-        model.train()
-        train_epoch_losses = run_epoch_phase(
-            model, optimizer, batch_queue, train_batches_per_epoch, "train", epoch, device
-        )
-
-        # Validation phase
-        model.eval()
-        with torch.no_grad():
-            val_epoch_losses = run_epoch_phase(
-                model, None, batch_queue, val_batches_per_epoch, "val", epoch, device
-            )
-
-        # Compute and display epoch averages
-        if train_epoch_losses:
-            train_avg = sum(train_epoch_losses) / len(train_epoch_losses)
-            train_losses.append(train_avg)
-
-        if val_epoch_losses:
-            val_avg = sum(val_epoch_losses) / len(val_epoch_losses)
-            val_losses.append(val_avg)
-            print(f"Epoch {epoch + 1}: train_loss={train_avg:.2e}, val_loss={val_avg:.2e}")
-
-    elapsed_time = time.time() - start_time
-    print(f"\nTraining complete! Total time: {elapsed_time:.1f}s")
-
-    return train_losses, val_losses
+def parse_args():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--data-dir", default="/data/scratch/regier/sep_des_stars_v2")
+    parser.add_argument("--manifest", default="manifests/split_v1.json")
+    parser.add_argument("--out-dir", default="checkpoints/run")
+    parser.add_argument("--band", default=None, help="restrict training to one band")
+    parser.add_argument("--max-epochs", type=int, default=20)
+    parser.add_argument("--batch-size", type=int, default=8)
+    parser.add_argument("--learning-rate", type=float, default=1e-4)
+    parser.add_argument("--weight-decay", type=float, default=1e-6)
+    parser.add_argument("--hidden-dim", type=int, default=256)
+    parser.add_argument("--decoder-dim", type=int, default=128)
+    parser.add_argument("--n-heads", type=int, default=8)
+    parser.add_argument("--context-dropout-max", type=float, default=0.5)
+    parser.add_argument("--no-attention", action="store_true")
+    parser.add_argument(
+        "--patience",
+        type=int,
+        default=25,
+        help="stop after this many epochs without val improvement",
+    )
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--queue-size", type=int, default=64)
+    return parser.parse_args()
 
 
 def main():
-    torch.manual_seed(42)
+    args = parse_args()
+    torch.manual_seed(args.seed)
 
-    # Configuration
-    image_size = 10000  # DES survey image size
-    patch_size = 32  # DES cutout size
-    max_epochs = 10  # Number of training epochs
-    batch_size = 8  # Real DES files have many exposures each
-    seed = 42
-    data_dir = "/data/scratch/regier/sep_des_stars"
-    file_pattern = "desstars_*.pt"  # Only real DES files, not test files
-    train_split = 0.9
-    queue_size = 64  # Larger buffer to reduce producer/consumer blocking
+    manifest = load_manifest(args.manifest)
+    train_files = split_file_indices(manifest, "train", args.band)
+    val_files = split_file_indices(manifest, "val", args.band)
+    train_batches = count_batches(train_files, args.batch_size)
+    val_batches = count_batches(val_files, args.batch_size)
+    print(f"train: {len(train_files)} files, {train_batches} batches/epoch")
+    print(f"val:   {len(val_files)} files, {val_batches} batches/epoch")
+    if train_batches == 0 or val_batches == 0:
+        raise RuntimeError("a split has no batches; check the manifest and band filter")
 
-    # Set up data files
-    train_files, val_files = setup_data_files(data_dir, file_pattern, None, train_split, seed)
-
-    # Compute dataset lengths for progress bars
-    train_batches_per_epoch = compute_dataset_length(train_files, batch_size)
-    val_batches_per_epoch = compute_dataset_length(val_files, batch_size)
-
-    # Create and start background producer
-    print(f"Creating producer process for {max_epochs} epochs...")
-    # Bounded queue prevents memory overflow:
-    # - maxsize=64 limits memory usage to ~64 batches worth of data
-    # - When full, producer blocks on put(), creating natural flow control
-    # - Training loop's get() operations create space for producer to continue
-    batch_queue = mp.Queue(maxsize=queue_size)
-
-    producer_process = mp.Process(
+    batch_queue = mp.Queue(maxsize=args.queue_size)
+    done_event = mp.Event()
+    producer = mp.Process(
         target=batch_producer,
-        args=(train_files, val_files, batch_size, max_epochs, batch_queue),
+        args=(
+            args.data_dir,
+            train_files,
+            val_files,
+            args.batch_size,
+            args.max_epochs,
+            batch_queue,
+            done_event,
+        ),
         daemon=True,
     )
-    producer_process.start()
+    producer.start()
 
-    # Create model
     model = ImplicitPSF(
-        patch_size=patch_size,
-        image_size=image_size,  # Full survey image size for position encoding
-        background_level=1.0,
-        hidden_dim=256,
-        n_heads=4,
-        learning_rate=1e-4,
-        use_attention=True,  # Test attention mode
+        patch_size=32,
+        hidden_dim=args.hidden_dim,
+        decoder_dim=args.decoder_dim,
+        n_heads=args.n_heads,
+        learning_rate=args.learning_rate,
+        weight_decay=args.weight_decay,
+        use_attention=not args.no_attention,
+        context_dropout_max=args.context_dropout_max,
     )
-
-    # Move model to GPU if available
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
-    print(f"Using device: {device}")
+    print(f"device: {device}")
 
-    # Create optimizer
     optimizer = torch.optim.Adam(
-        model.parameters(), lr=model.learning_rate, weight_decay=model.weight_decay
+        model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay
     )
+    scheduler = make_scheduler(optimizer, args.max_epochs)
 
-    # Run training loop
-    train_losses, val_losses = run_training_loop(
-        model,
-        optimizer,
-        batch_queue,
-        max_epochs,
-        train_batches_per_epoch,
-        val_batches_per_epoch,
-        device,
-    )
+    out_dir = Path(args.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    log_path = out_dir / "train_log.csv"
+    with open(log_path, "w", newline="", encoding="utf-8") as handle:
+        csv.writer(handle).writerow(["epoch", "train_loss", "val_loss", "lr", "seconds"])
 
-    # Save the final model
-    final_model_path = "trained_psf_model.pt"
-    torch.save(
-        {
-            "model_state_dict": model.state_dict(),
-            "optimizer_state_dict": optimizer.state_dict(),
-            "train_losses": train_losses,
-            "val_losses": val_losses,
-            "hyperparameters": model.hparams,
-        },
-        final_model_path,
-    )
-    print(f"Model saved to {final_model_path}")
+    best_val = float("inf")
+    epochs_since_best = 0
+    for epoch in range(args.max_epochs):
+        start = time.time()
+        model.train()
+        train_loss = run_epoch_phase(
+            model, optimizer, batch_queue, train_batches, "train", epoch, device
+        )
+        model.eval()
+        with torch.no_grad():
+            val_loss = run_epoch_phase(model, None, batch_queue, val_batches, "val", epoch, device)
 
-    # Clean up producer process
-    if producer_process.is_alive():
-        print("Cleaning up producer process...")
-        try:
-            # Send shutdown signal to producer
-            batch_queue.put({"signal": "shutdown"})
+        lr = scheduler.get_last_lr()[0]
+        scheduler.step()
+        seconds = time.time() - start
+        print(f"epoch {epoch}: train={train_loss:.4e} val={val_loss:.4e} lr={lr:.2e}")
+        with open(log_path, "a", newline="", encoding="utf-8") as handle:
+            csv.writer(handle).writerow([epoch, train_loss, val_loss, lr, round(seconds, 1)])
 
-            # Wait for graceful shutdown
-            producer_process.join(timeout=5)
+        checkpoint_path = save_checkpoint(model, optimizer, epoch, val_loss, out_dir)
+        if val_loss < best_val:
+            best_val = val_loss
+            epochs_since_best = 0
+            shutil.copy(checkpoint_path, out_dir / "best.pt")
+        else:
+            epochs_since_best += 1
+            if epochs_since_best >= args.patience:
+                print(f"early stop at epoch {epoch}: no val improvement in {args.patience}")
+                break
 
-            if producer_process.is_alive():
-                print("Terminating producer process...")
-                producer_process.terminate()
-                producer_process.join(timeout=2)
-
-        except Exception as e:
-            print(f"Error during producer process cleanup: {e}")
-
-        # Close queue, ignoring cleanup errors
-        with contextlib.suppress(Exception):
-            batch_queue.close()
+    # unblock a producer stuck on put() before signalling shutdown
+    while not batch_queue.empty():
+        batch_queue.get_nowait()
+    done_event.set()
+    producer.join(timeout=30)
+    print(f"done; best val loss {best_val:.4e}; checkpoints in {out_dir}")
 
 
 if __name__ == "__main__":

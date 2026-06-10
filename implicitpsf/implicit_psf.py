@@ -1,87 +1,124 @@
 import pytorch_lightning as pl
 import torch
-import torch.nn.functional as F  # noqa: N812
 from einops import rearrange
 from torch import nn
 
 
-class PSFDecoder(nn.Module):
-    """Decodes attention features and star centers into PSF images."""
+def stamp_offsets(positions, patch_size, oversample=1):
+    """Continuous (du, dv) offsets of stamp sample centers from each star's center.
 
-    def __init__(self, hidden_dim, image_size, use_features=True):
+    Stamps are extracted with corner = round(center) - patch_size // 2, so the sample
+    at native pixel (i, j) has center offset (j - half - fx, i - half - fy), where
+    (fx, fy) = center - round(center). With oversample > 1, each native pixel is
+    subdivided into oversample^2 samples covering the same extent.
+
+    Args:
+        positions: (batch, n_stars, 2) star centers (x, y) in CCD pixel coordinates
+        patch_size: native stamp width in pixels
+        oversample: samples per native pixel along each axis
+
+    Returns:
+        offsets: (batch, n_stars, (patch_size * oversample) ** 2, 2) offsets in pixels
+    """
+    half = patch_size // 2
+    n_samples = patch_size * oversample
+    step = 1.0 / oversample
+    grid_1d = torch.arange(n_samples, device=positions.device, dtype=positions.dtype)
+    grid_1d = grid_1d * step + (step - 1.0) / 2.0 - half
+    grid_v, grid_u = torch.meshgrid(grid_1d, grid_1d, indexing="ij")
+    grid = torch.stack([grid_u, grid_v], dim=-1).reshape(-1, 2)
+
+    subpixel = positions - positions.round()
+    return grid - subpixel.unsqueeze(2)
+
+
+class PSFDecoder(nn.Module):
+    """Implicit PSF decoder: intensity at continuous offsets from a star center."""
+
+    def __init__(self, feature_dim, patch_size, decoder_dim=128, n_freqs=8, use_features=True):
         super().__init__()
-        self.hidden_dim = hidden_dim
-        self.image_size = image_size
+        self.patch_size = patch_size
+        self.n_freqs = n_freqs
         self.use_features = use_features
 
-        mlp_input_size = hidden_dim * 2 if use_features else hidden_dim
-
+        coord_dim = 4 * n_freqs  # sin/cos for u and v at n_freqs frequencies
         self.coord_embedding = nn.Sequential(
-            nn.Linear(2, hidden_dim),
+            nn.Linear(coord_dim, decoder_dim),
             nn.ReLU(inplace=True),
-            nn.Linear(hidden_dim, hidden_dim),
+            nn.Linear(decoder_dim, decoder_dim),
         )
+        if use_features:
+            self.feature_projection = nn.Linear(feature_dim, decoder_dim)
 
-        # MLP to generate PSF values
         self.pixel_mlp = nn.Sequential(
-            nn.Linear(mlp_input_size, hidden_dim),
+            nn.Linear(decoder_dim, decoder_dim),
             nn.ReLU(inplace=True),
-            nn.Linear(hidden_dim, hidden_dim),
+            nn.Linear(decoder_dim, decoder_dim),
             nn.ReLU(inplace=True),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(inplace=True),
-            nn.Linear(hidden_dim, image_size**2),
-            nn.Softplus(),  # Ensure nonnegative flux
+            nn.Linear(decoder_dim, 1),
+            nn.Softplus(),  # strictly positive intensity
         )
 
-    def forward(self, star_centers, attn_features):
-        """Generate PSF images from attention features and star centers."""
-        subpixel_offset = (star_centers + 0.5) % 1 - 0.5  # varies within [-0.5, 0.5]
-        mlp_input = self.coord_embedding(subpixel_offset)
+    def _fourier_features(self, offsets):
+        normalized = offsets / (self.patch_size // 2)
+        freqs = 2.0 ** torch.arange(self.n_freqs, device=offsets.device, dtype=offsets.dtype)
+        angles = normalized.unsqueeze(-1) * (torch.pi * freqs)
+        angles = rearrange(angles, "b s n c f -> b s n (c f)")
+        return torch.cat([torch.sin(angles), torch.cos(angles)], dim=-1)
 
-        if attn_features is not None:
-            mlp_input = torch.cat([mlp_input, attn_features], dim=-1)
+    def forward(self, offsets, features):
+        """Evaluate PSF intensity at continuous offsets.
 
-        pred_psf_flat = self.pixel_mlp(mlp_input)
-        return rearrange(
-            pred_psf_flat, "b s (h w) -> b s h w", h=self.image_size, w=self.image_size
-        )
+        Args:
+            offsets: (batch, n_stars, n_samples, 2) offsets from star centers in pixels
+            features: (batch, n_stars, feature_dim) per-star conditioning, or None
+
+        Returns:
+            intensities: (batch, n_stars, n_samples) strictly positive raw intensities
+        """
+        hidden = self.coord_embedding(self._fourier_features(offsets))
+        if self.use_features:
+            hidden = hidden + self.feature_projection(features).unsqueeze(2)
+        return self.pixel_mlp(hidden).squeeze(-1)
 
 
 class ImplicitPSF(pl.LightningModule):
-    """Attention-based PSF modeling with PyTorch Lightning.
+    """Attention-based implicit PSF field for single-CCD exposures.
 
-    Uses multi-head attention to predict each star's PSF based on all other stars in the field.
+    Every star is a query (position, color, flux); keys and values combine position
+    encodings with encoded cutouts of the context stars. The decoder renders the PSF
+    at arbitrary continuous offsets, so stamps can be produced at any resolution.
     """
 
     def __init__(
         self,
         patch_size,
-        image_size,  # Size of full survey image for position encoding
-        background_level=0.0,
+        ccd_width=2048.0,
+        ccd_height=4096.0,
         hidden_dim=256,
+        decoder_dim=128,
         n_heads=8,
         learning_rate=1e-4,
         weight_decay=1e-6,
-        use_attention=True,  # Flag to enable/disable attention
+        use_attention=True,
+        context_dropout_max=0.5,
     ):
         super().__init__()
         self.save_hyperparameters()
 
-        # Model parameters
         self.patch_size = patch_size
-        self.image_size = image_size
-        self.background_level = background_level
+        self.ccd_size = (ccd_width, ccd_height)
         self.hidden_dim = hidden_dim
         self.n_heads = n_heads
         self.use_attention = use_attention
+        self.context_dropout_max = context_dropout_max
+        self.learning_rate = learning_rate
+        self.weight_decay = weight_decay
 
-        # Sinusoidal position encoding for full image coordinates
-        self.pos_encoding_dim = hidden_dim  # Full hidden_dim for position only
+        # color and log-flux of the queried object (flux enables brighter-fatter)
+        self.scalar_embedding = nn.Linear(2, hidden_dim)
 
-        # Image encoder - encode 8x8 star images to hidden dimension
         self.image_encoder = nn.Sequential(
-            nn.Flatten(),  # 8x8 = 64 pixels
             nn.Linear(patch_size * patch_size, hidden_dim),
             nn.ReLU(inplace=True),
             nn.Linear(hidden_dim, hidden_dim),
@@ -89,123 +126,136 @@ class ImplicitPSF(pl.LightningModule):
             nn.LayerNorm(hidden_dim),
         )
 
-        # Single multi-head attention layer (only if using attention)
         if self.use_attention:
             self.attention_layer = nn.MultiheadAttention(hidden_dim, n_heads, batch_first=True)
             self.attention_norm = nn.LayerNorm(hidden_dim)
 
-        # PSF decoder module
-        self.psf_decoder = PSFDecoder(hidden_dim, patch_size, use_features=self.use_attention)
-
-        # Training parameters
-        self.learning_rate = learning_rate
-        self.weight_decay = weight_decay
+        self.psf_decoder = PSFDecoder(
+            hidden_dim, patch_size, decoder_dim=decoder_dim, use_features=self.use_attention
+        )
 
     def _sinusoidal_position_encoding(self, positions):
-        """Create sinusoidal position encodings for 2D positions.
+        """Sinusoidal encodings of 2D CCD positions, normalized per axis.
 
         Args:
-            positions: (batch_size, n_stars, 2) positions in full image coordinates
+            positions: (batch, n_stars, 2) positions (x, y) in CCD pixel coordinates
 
         Returns:
-            pos_encodings: (batch_size, n_stars, pos_encoding_dim) sinusoidal encodings
+            encodings: (batch, n_stars, hidden_dim)
         """
-        # Normalize positions to [0, 1] range
-        normalized_pos = positions / self.image_size
+        ccd_size = torch.tensor(self.ccd_size, device=positions.device, dtype=positions.dtype)
+        normalized_pos = positions / ccd_size
 
-        # Create frequency bands
-        num_bands = self.pos_encoding_dim // 4  # 4 terms per band (sin/cos for x/y)
-        freq_bands = torch.arange(num_bands, device=positions.device, dtype=torch.float32)
-        # Scale frequencies appropriately for 10000x10000 images
-        # Lower frequencies for better spatial resolution
-        freq_bands = torch.pow(1000.0, -freq_bands / num_bands)  # Reduced base from 10000 to 1000
+        num_bands = self.hidden_dim // 4  # sin/cos for x and y per band
+        band_idx = torch.arange(num_bands, device=positions.device, dtype=positions.dtype)
+        freq_bands = torch.pow(1000.0, -band_idx / num_bands)
 
-        # Apply frequencies to x and y coordinates
-        x_pos = normalized_pos[:, :, 0:1]  # (batch_size, n_stars, 1)
-        y_pos = normalized_pos[:, :, 1:2]  # (batch_size, n_stars, 1)
+        x_scaled = normalized_pos[:, :, 0:1] * freq_bands
+        y_scaled = normalized_pos[:, :, 1:2] * freq_bands
 
-        # Broadcast positions with frequency bands
-        x_scaled = x_pos * freq_bands  # (batch_size, n_stars, num_bands)
-        y_scaled = y_pos * freq_bands  # (batch_size, n_stars, num_bands)
-
-        # Create sin/cos encodings
-        encodings = torch.cat(
-            [
-                torch.sin(x_scaled),  # (batch_size, n_stars, num_bands)
-                torch.cos(x_scaled),  # (batch_size, n_stars, num_bands)
-                torch.sin(y_scaled),  # (batch_size, n_stars, num_bands)
-                torch.cos(y_scaled),  # (batch_size, n_stars, num_bands)
-            ],
+        return torch.cat(
+            [torch.sin(x_scaled), torch.cos(x_scaled), torch.sin(y_scaled), torch.cos(y_scaled)],
             dim=-1,
-        )  # (batch_size, n_stars, pos_encoding_dim)
+        )
 
-        return encodings
+    def _attend(self, cutouts, positions, colors, fluxes, context_mask):
+        """Attention features for every star, attending only to context stars.
 
-    def forward(self, star_images, star_centers, nonzero_mask=None):
-        """Forward pass using attention."""
-        batch_size, n_stars = star_images.shape[:2]
+        Args:
+            cutouts: (batch, n_stars, patch, patch) observed stamps
+            positions: (batch, n_stars, 2) star centers in CCD coordinates
+            colors: (batch, n_stars) per-star colors
+            fluxes: (batch, n_stars) per-star fluxes
+            context_mask: (batch, n_stars) bool, True = may be attended to as a key
 
+        Returns:
+            features: (batch, n_stars, hidden_dim)
+        """
+        n_stars = cutouts.shape[1]
+        if not context_mask.any(dim=1).all():
+            raise ValueError("every exposure needs at least one context star")
+
+        pos_encodings = self._sinusoidal_position_encoding(positions)
+        scalars = torch.stack([colors, torch.log1p(fluxes.clamp(min=0.0))], dim=-1)
+        scalar_features = self.scalar_embedding(scalars)
+
+        # scale-normalize stamps; absolute brightness enters via the log-flux scalar
+        cutouts_flat = rearrange(cutouts, "b s h w -> b s (h w)")
+        scale = cutouts_flat.abs().sum(dim=-1, keepdim=True) + 1e-8
+        image_features = self.image_encoder(cutouts_flat / scale)
+
+        queries = pos_encodings + scalar_features
+        keys = pos_encodings + scalar_features + image_features
+
+        self_mask = torch.eye(n_stars, device=cutouts.device, dtype=torch.bool)
+        attn_output, _ = self.attention_layer(
+            queries,
+            keys,
+            keys,
+            attn_mask=self_mask,
+            key_padding_mask=~context_mask,
+            need_weights=False,
+        )
+        return self.attention_norm(attn_output)
+
+    def forward(self, cutouts, positions, colors, fluxes, context_mask, oversample=1):
+        """Render unit-sum PSF stamps at every star's position.
+
+        Args:
+            cutouts: (batch, n_stars, patch, patch) observed stamps (context information)
+            positions: (batch, n_stars, 2) star centers in CCD coordinates
+            colors: (batch, n_stars) per-star colors (0.0 where unknown)
+            fluxes: (batch, n_stars) per-star fluxes (0.0 marks padding)
+            context_mask: (batch, n_stars) bool, True = may be attended to as a key
+            oversample: samples per native pixel along each axis
+
+        Returns:
+            psfs: (batch, n_stars, patch * oversample, patch * oversample) stamps,
+                normalized to unit sum at native resolution
+        """
+        features = None
         if self.use_attention:
-            # Attention-based approach: stars attend to each other using image features
-            pos_encodings = self._sinusoidal_position_encoding(star_centers)
+            features = self._attend(cutouts, positions, colors, fluxes, context_mask)
 
-            # Encode star images to get features
-            star_images_flat = rearrange(star_images, "b s h w -> (b s) (h w)")
-            image_features = self.image_encoder(
-                star_images_flat
-            )  # (batch_size * n_stars, hidden_dim)
-            image_features = rearrange(image_features, "(b s) d -> b s d", b=batch_size)
-
-            # Combine position and image information for keys and values
-            # Queries are still just positions (what each star is asking for)
-            # Keys combine position + image (where each star is + what it looks like)
-            # Values combine position + image (the information to aggregate)
-            combined_features = pos_encodings + image_features  # (batch_size, n_stars, hidden_dim)
-
-            queries = pos_encodings  # (batch_size, n_stars, hidden_dim) - where we're asking from
-            keys = combined_features  # (batch_size, n_stars, hidden_dim) - what's available
-            values = combined_features  # (batch_size, n_stars, hidden_dim) - what we get
-
-            # Create mask to prevent self-attention and attention to padding sources
-            mask = torch.eye(
-                n_stars, device=pos_encodings.device, dtype=torch.bool
-            )  # (n_stars, n_stars)
-
-            # Also mask out padding sources (zero flux) from being attended to
-            if nonzero_mask is not None:
-                # Expand nonzero_mask from (batch_size, n_stars) to (n_stars, n_stars)
-                # to mask out columns (keys) where flux is zero
-                padding_mask = ~nonzero_mask[0]  # Assuming same mask across batch
-                mask = mask | padding_mask.unsqueeze(0)  # Broadcast to (n_stars, n_stars)
-
-            # Single attention layer with mask
-            attn_output, _ = self.attention_layer(queries, keys, values, attn_mask=mask)
-            attended_features = self.attention_norm(attn_output)
-        else:
-            # Non-attention approach: no learned features, just use coordinate-based MLP
-            attended_features = None
-
-        # Use PSF decoder to generate images
-        return self.psf_decoder(star_centers, attended_features)
+        offsets = stamp_offsets(positions, self.patch_size, oversample)
+        intensities = self.psf_decoder(offsets, features)
+        normalized = intensities / intensities.sum(dim=-1, keepdim=True) * oversample**2
+        side = self.patch_size * oversample
+        return rearrange(normalized, "b s (h w) -> b s h w", h=side, w=side)
 
     def get_loss(self, batch):
-        # Expect batch as dictionary
-        star_images = batch["cutouts"]
-        star_fluxes = batch["flux"]
-        star_centers = batch["positions"]
+        """Weighted chi-square loss over clean stars, amplitude fit per star.
+
+        Batch keys: cutouts, variance, valid_pixels, flux, positions, colors, star_types.
+        Cutouts are background-subtracted; the per-star amplitude is solved in closed
+        form by weighted least squares, so the loss measures shape, not flux calibration.
+        """
+        cutouts = batch["cutouts"]
+        fluxes = batch["flux"]
         star_types = batch["star_types"]
 
-        nonzero_mask = star_fluxes > 0
-        clean_mask = (star_types == 0) & nonzero_mask  # Only clean stars with nonzero flux
+        context_mask = fluxes > 0
+        if self.training and self.context_dropout_max > 0:
+            keep_frac = 1.0 - torch.rand(1, device=cutouts.device) * self.context_dropout_max
+            kept = torch.rand_like(fluxes) < keep_frac
+            context_mask = context_mask & kept
 
-        pred_psfs = self(star_images, star_centers, nonzero_mask)
-        pred_images = pred_psfs * star_fluxes.unsqueeze(-1).unsqueeze(-1) + self.background_level
+        clean_mask = (star_types == 0) & (fluxes > 0)
+        if not clean_mask.any():
+            raise ValueError("batch contains no clean stars")
 
-        # Only compute loss for clean stars (all other stars are predictors only)
-        if clean_mask.any():
-            loss = F.mse_loss(pred_images[clean_mask], star_images[clean_mask])
-        else:
-            loss = torch.zeros(1, device=star_images.device, requires_grad=True)
+        pred_psfs = self(cutouts, batch["positions"], batch["colors"], fluxes, context_mask)
 
-        # No logging needed - handled by custom training loop
-        return loss
+        weights = batch["valid_pixels"].float() / batch["variance"]
+        observed = rearrange(cutouts[clean_mask], "n h w -> n (h w)")
+        model = rearrange(pred_psfs[clean_mask], "n h w -> n (h w)")
+        w = rearrange(weights[clean_mask], "n h w -> n (h w)")
+
+        n_valid = w.count_nonzero(dim=-1).float()
+        if (n_valid == 0).any():
+            raise ValueError("clean star with no valid pixels")
+
+        amplitude = (w * observed * model).sum(dim=-1) / (w * model.square()).sum(dim=-1)
+        residuals = observed - amplitude.unsqueeze(-1) * model
+        chi2_per_star = (w * residuals.square()).sum(dim=-1) / n_valid
+        return chi2_per_star.mean()

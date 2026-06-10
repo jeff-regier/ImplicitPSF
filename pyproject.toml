@@ -18,11 +18,17 @@ dependencies = [
     "astropy>=7.1.1",
     "h5py>=3.11.0",
     "sep>=1.4.1",
-    "astroscrappy>=1.2",
     "pandas",
+    "scipy",
     "tqdm>=4.67.1",
     "astro-datalab>=2.24",
     "requests>=2.34.2",
+    "astromatch",
+    "pycurl>=7.46.0",
+    "piff>=1.6.0",
+    "galsim>=2.8.4",
+    "treecorr>=5.1.3",
+    "tabulate>=0.10.0",
 ]
 
 [dependency-groups]
@@ -35,6 +41,7 @@ dev = [
 
 [tool.uv.sources]
 torch = { index = "pytorch-cu128" }
+astromatch = { path = "../AstroMatch", editable = true }
 
 [[tool.uv.index]]
 name = "pytorch-cu128"
@@ -79,7 +86,7 @@ ignore = [
     "SLF001",   # private-member-access (tests access private methods)
 ]
 # Legacy DES data-acquisition scripts, pending refactor
-"implicitpsf/{des_file_discovery,download_des_exposures,extract_des_stars}.py" = [
+"implicitpsf/{des_file_discovery,download_des_exposures}.py" = [
     "ARG001",  # unused-function-argument
     "B023",    # function-uses-loop-variable (closure invoked in the same iteration)
     "C901",    # complex-structure
