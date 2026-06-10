@@ -1,8 +1,8 @@
 import pytorch_lightning as pl
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
+import torch.nn.functional as F  # noqa: N812
 from einops import rearrange
+from torch import nn
 
 
 class PSFDecoder(nn.Module):
@@ -141,7 +141,7 @@ class ImplicitPSF(pl.LightningModule):
 
         return encodings
 
-    def forward(self, star_images, star_centers, nonzero_mask=None, clean_mask=None):
+    def forward(self, star_images, star_centers, nonzero_mask=None):
         """Forward pass using attention."""
         batch_size, n_stars = star_images.shape[:2]
 
@@ -173,8 +173,8 @@ class ImplicitPSF(pl.LightningModule):
 
             # Also mask out padding sources (zero flux) from being attended to
             if nonzero_mask is not None:
-                # Expand nonzero_mask to attention shape: (batch_size, n_stars) -> (n_stars, n_stars)
-                # We want to mask out columns (keys) where flux is zero
+                # Expand nonzero_mask from (batch_size, n_stars) to (n_stars, n_stars)
+                # to mask out columns (keys) where flux is zero
                 padding_mask = ~nonzero_mask[0]  # Assuming same mask across batch
                 mask = mask | padding_mask.unsqueeze(0)  # Broadcast to (n_stars, n_stars)
 
@@ -198,7 +198,7 @@ class ImplicitPSF(pl.LightningModule):
         nonzero_mask = star_fluxes > 0
         clean_mask = (star_types == 0) & nonzero_mask  # Only clean stars with nonzero flux
 
-        pred_psfs = self(star_images, star_centers, nonzero_mask, clean_mask)
+        pred_psfs = self(star_images, star_centers, nonzero_mask)
         pred_images = pred_psfs * star_fluxes.unsqueeze(-1).unsqueeze(-1) + self.background_level
 
         # Only compute loss for clean stars (all other stars are predictors only)

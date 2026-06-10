@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import contextlib
 import glob
 import multiprocessing as mp
 import queue
@@ -12,7 +13,7 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-from implicit_psf import ImplicitPSF
+from implicitpsf.implicit_psf import ImplicitPSF
 
 warnings.filterwarnings("ignore", ".*does not have many workers.*")
 warnings.filterwarnings("ignore", ".*IterableDataset.*has.*__len__.*defined.*")
@@ -24,7 +25,7 @@ def get_file_exposure_count(file_path):
         data = torch.load(file_path, weights_only=False)
         return data["cutouts"].shape[0]  # First dimension is number of exposures
     except Exception as e:
-        raise ValueError(f"Could not read exposure count from {file_path}: {e}")
+        raise ValueError(f"Could not read exposure count from {file_path}: {e}") from e
 
 
 def compute_dataset_length(file_paths, batch_size):
@@ -104,7 +105,6 @@ def batch_producer(train_files, val_files, batch_size, max_epochs, batch_queue):
     # Generate complete training schedule for all epochs
     # Note: Producer will automatically pause when queue fills up
     for epoch in range(max_epochs):
-
         # TRAINING PHASE - put batches in queue
         # Training: randomize file order each epoch
         train_files_epoch = train_files.copy()
@@ -179,6 +179,46 @@ def setup_data_files(data_dir, file_pattern, max_files, train_split, seed):
     return train_files, val_files
 
 
+def run_epoch_phase(model, optimizer, batch_queue, n_batches, phase, epoch, device):
+    """Consume one epoch's worth of batches for a phase; train if an optimizer is given."""
+    desc = {"train": "Training", "val": "Validation"}[phase]
+    losses = []
+
+    with tqdm(total=n_batches, desc=desc, ncols=120) as pbar:
+        while len(losses) < n_batches:
+            try:
+                # Each get() creates space in the bounded queue for the producer to continue
+                batch_data = batch_queue.get(timeout=10)
+            except queue.Empty:
+                print(f"⚠️ Queue timeout during {phase} epoch {epoch}")
+                break
+
+            # Handle producer completion signal
+            if isinstance(batch_data, dict) and batch_data.get("signal") == "producer_done":
+                print(f"⚠️ Producer finished early during {phase}")
+                break
+
+            # Skip if not a batch for this phase and epoch
+            if batch_data.get("phase") != phase or batch_data.get("epoch") != epoch:
+                print("⚠️ Skipping out-of-order batch: this should not happen!")
+                continue
+
+            tensor_keys = ("cutouts", "flux", "positions", "star_types")
+            batch = {key: batch_data[key].to(device) for key in tensor_keys}
+            loss = model.get_loss(batch)
+
+            if optimizer is not None:
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+
+            losses.append(loss.item())
+            pbar.set_postfix({"loss": f"{loss.item():.1e}", "queue": batch_queue.qsize()})
+            pbar.update(1)
+
+    return losses
+
+
 def run_training_loop(
     model,
     optimizer,
@@ -200,106 +240,16 @@ def run_training_loop(
 
         # Training phase
         model.train()
-        train_epoch_losses = []
-
-        with tqdm(total=train_batches_per_epoch, desc="Training", ncols=120) as pbar:
-            train_batch_count = 0
-
-            while train_batch_count < train_batches_per_epoch:
-                try:
-                    # Get batch from queue with timeout
-                    # This queue.get() creates space in queue, allowing blocked producer to continue
-                    batch_data = batch_queue.get(timeout=10)
-
-                    # Handle producer completion signal
-                    if isinstance(batch_data, dict) and batch_data.get("signal") == "producer_done":
-                        print("⚠️ Producer finished early during training")
-                        break
-
-                    # Skip if not training batch for this epoch
-                    if batch_data.get("phase") != "train" or batch_data.get("epoch") != epoch:
-                        print("⚠️ Skipping out-of-order batch: this should not happen!")
-                        continue
-
-                    # Move tensors to device and create batch dict
-                    batch = {
-                        "cutouts": batch_data["cutouts"].to(device),
-                        "flux": batch_data["flux"].to(device),
-                        "positions": batch_data["positions"].to(device),
-                        "star_types": batch_data["star_types"].to(device),
-                    }
-
-                    # Forward pass
-                    loss = model.get_loss(batch)
-
-                    # Backward pass
-                    optimizer.zero_grad()
-                    loss.backward()
-                    optimizer.step()
-
-                    # Track loss
-                    train_epoch_losses.append(loss.item())
-                    train_batch_count += 1
-
-                    # Update progress bar
-                    pbar.set_postfix({"loss": f"{loss.item():.1e}", "queue": batch_queue.qsize()})
-                    pbar.update(1)
-
-                except queue.Empty:
-                    print(f"⚠️ Queue timeout during training epoch {epoch}")
-                    break
+        train_epoch_losses = run_epoch_phase(
+            model, optimizer, batch_queue, train_batches_per_epoch, "train", epoch, device
+        )
 
         # Validation phase
         model.eval()
-        val_epoch_losses = []
-
-        with tqdm(total=val_batches_per_epoch, desc="Validation", ncols=120) as pbar:
-            val_batch_count = 0
-
-            with torch.no_grad():
-                while val_batch_count < val_batches_per_epoch:
-                    try:
-                        # Get batch from queue with timeout
-                        # Each get() creates space for producer to add more batches
-                        batch_data = batch_queue.get(timeout=10)
-
-                        # Handle producer completion signal
-                        if (
-                            isinstance(batch_data, dict)
-                            and batch_data.get("signal") == "producer_done"
-                        ):
-                            print("⚠️ Producer finished early during validation")
-                            break
-
-                        # Skip if not validation batch for this epoch
-                        if batch_data.get("phase") != "val" or batch_data.get("epoch") != epoch:
-                            print("⚠️ Skipping out-of-order batch: this should not happen!")
-                            continue
-
-                        # Move tensors to device and create batch dict
-                        batch = {
-                            "cutouts": batch_data["cutouts"].to(device),
-                            "flux": batch_data["flux"].to(device),
-                            "positions": batch_data["positions"].to(device),
-                            "star_types": batch_data["star_types"].to(device),
-                        }
-
-                        # Forward pass only
-                        loss = model.get_loss(batch)
-
-                        # Track loss
-                        val_epoch_losses.append(loss.item())
-                        val_batch_count += 1
-
-                        # Update progress bar
-                        pbar.set_postfix(
-                            {"loss": f"{loss.item():.1e}", "queue": batch_queue.qsize()}
-                        )
-                        pbar.update(1)
-
-                    except queue.Empty:
-                        print(f"⚠️ Queue timeout during validation epoch {epoch}")
-                        break
+        with torch.no_grad():
+            val_epoch_losses = run_epoch_phase(
+                model, None, batch_queue, val_batches_per_epoch, "val", epoch, device
+            )
 
         # Compute and display epoch averages
         if train_epoch_losses:
@@ -417,11 +367,9 @@ def main():
         except Exception as e:
             print(f"Error during producer process cleanup: {e}")
 
-        # Close queue
-        try:
+        # Close queue, ignoring cleanup errors
+        with contextlib.suppress(Exception):
             batch_queue.close()
-        except Exception:
-            pass  # Ignore queue cleanup errors
 
 
 if __name__ == "__main__":

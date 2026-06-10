@@ -26,8 +26,10 @@ bin/
 nohup*.out
 multirun
 *.db
-*.lock
 inference_visualizations/
 outputs/
 checkpoints/
 *.ckpt
+*.pt
+des_directories.txt
+.ruff_cache/

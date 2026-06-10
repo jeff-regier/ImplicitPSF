@@ -3,6 +3,7 @@
 Visualize DES single epoch PSF data from HDF5 file
 """
 
+import sys
 from pathlib import Path
 
 import h5py
@@ -114,7 +115,7 @@ def visualize_psf_data(h5_file_path):
         # Show 4 example PSFs
         examples = np.linspace(0, len(cutouts) - 1, 4, dtype=int)
 
-        fig2, axes = plt.subplots(2, 2, figsize=(8, 8))
+        _fig2, axes = plt.subplots(2, 2, figsize=(8, 8))
         axes = axes.flatten()
 
         for i, idx in enumerate(examples):
@@ -150,7 +151,8 @@ def visualize_psf_data(h5_file_path):
         plt.text(
             0.5,
             0.5,
-            f"✅ {field_name}\n\n{num_stars} single epoch\nPSF cutouts\n\nReal DES data\nfrom SIA service\n\nSaved to PNG files",
+            f"✅ {field_name}\n\n{num_stars} single epoch\nPSF cutouts\n\n"
+            "Real DES data\nfrom SIA service\n\nSaved to PNG files",
             ha="center",
             va="center",
             fontsize=12,
@@ -180,7 +182,7 @@ if __name__ == "__main__":
 
     if len(h5_files) == 0:
         print("No HDF5 files found in des_single_epoch_psf_data/")
-        exit(1)
+        sys.exit(1)
 
     print(f"Found {len(h5_files)} HDF5 files to visualize")
 
@@ -191,9 +193,9 @@ if __name__ == "__main__":
         print(f"\nProcessing: {h5_file.name}")
         try:
             main_file, psf_file = visualize_psf_data(h5_file)
-            print(f"  ✅ Created visualizations")
+            print("  ✅ Created visualizations")
         except Exception as e:
             print(f"  ❌ Error: {e}")
 
-    print(f"\n📁 All visualizations saved to: psf_visualizations/")
+    print("\n📁 All visualizations saved to: psf_visualizations/")
     print("🎉 DES single epoch PSF visualization complete!")

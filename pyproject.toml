@@ -1,47 +1,109 @@
-[tool.poetry]
-name = "ImplicitPSF"
+[project]
+name = "implicitpsf"
 version = "0.1.0"
-description = ""
-authors = ["Jeffrey Regier <regier@umich.edu>"]
-package-mode = false
+description = "Attention-based implicit PSF modeling for DES single-epoch images"
+authors = [{name = "Jeffrey Regier", email = "regier@umich.edu"}]
+readme = "README.md"
+license = "MIT"
+keywords = ["astronomy", "machine-learning", "psf", "attention"]
+requires-python = ">=3.12,<3.15"
+dependencies = [
+    # PyTorch with CUDA 12.8 support (includes cuDNN)
+    # Check CUDA version: nvidia-smi
+    "torch>=2.7.0",
+    "numpy",
+    "matplotlib",
+    "einops>=0.8.1",
+    "pytorch-lightning>=2.5",
+    "astropy>=7.1.1",
+    "h5py>=3.11.0",
+    "sep>=1.4.1",
+    "astroscrappy>=1.2",
+    "pandas",
+    "tqdm>=4.67.1",
+    "astro-datalab>=2.24",
+    "requests>=2.34.2",
+]
 
-[tool.poetry.dependencies]
-python = "^3.11"
-torch = "*"
-numpy = "*"
-scipy = "*"
-matplotlib = "*"
-torchdiffeq = "*"
-pytorch-lightning = "*"
-einops = "^0.8.1"
-torchvision = "^0.22.1"
-hydra-core = "*"
-hydra-optuna-sweeper = "*"
-omegaconf = "*"
-lightning = {extras = ["extra"], version = "^2.5.2"}
-astropy = "^7.1.0"
-h5py = "^3.14.0"
-sep = "^1.4.1"
-astrophot = "^0.16.13"
+[dependency-groups]
+dev = [
+    "pytest>=8.4.2",
+    "pre-commit-hooks>=6.0.0",
+    "ruff>=0.14.9",
+    "prek>=0.4.4",
+]
 
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
 
-[tool.poetry.group.dev.dependencies]
-pre-commit = "^4.2.0"
-isort = "^6.0.1"
-pylint = "^3.3.7"
-flake8 = "^7.3.0"
-darglint = "^1.8.1"
-black = "^25.1.0"
-pre-commit-hooks = "^5.0.0"
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
 
-[tool.black]
+[tool.ruff]
 line-length = 100
-target-version = ['py310']
+target-version = "py312"
 
-[tool.isort]
-profile = "black"
-line_length = 100
+[tool.ruff.lint]
+select = [
+    "E",     # pycodestyle errors
+    "W",     # pycodestyle warnings
+    "F",     # pyflakes
+    "I",     # isort
+    "N",     # pep8-naming
+    "UP",    # pyupgrade
+    "PL",    # pylint
+    "C90",   # mccabe complexity
+    "ARG",   # flake8-unused-arguments
+    "SLF",   # flake8-self
+    "B",     # flake8-bugbear
+    "SIM",   # flake8-simplify
+    "RUF",   # ruff-specific rules
+    "PIE",   # flake8-pie
+    "PERF",  # perflint
+    "PT",    # flake8-pytest-style
+]
+
+ignore = [
+    "PLR0913", # too-many-arguments
+    "PLR0915", # too-many-statements
+    "PLR2004", # magic-value-comparison
+    "RUF001",  # ambiguous-unicode-character-string (math symbols)
+    "RUF002",  # ambiguous-unicode-character-docstring (math symbols)
+    "RUF003",  # ambiguous-unicode-character-comment (math symbols)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = [
+    "SLF001",   # private-member-access (tests access private methods)
+]
+# Legacy DES data-acquisition scripts, pending refactor
+"implicitpsf/{des_file_discovery,download_des_exposures,extract_des_stars}.py" = [
+    "ARG001",  # unused-function-argument
+    "B023",    # function-uses-loop-variable (closure invoked in the same iteration)
+    "C901",    # complex-structure
+    "E501",    # line-too-long
+    "N806",    # non-lowercase-variable-in-function (moment matrices Ixx, Ixy, ...)
+    "N813",    # camelcase-imported-as-lowercase (Data Lab's authClient/storeClient)
+    "PLC0415", # import-outside-top-level
+    "PLR0911", # too-many-return-statements
+    "PLR0912", # too-many-branches
+    "PLW2901", # redefined-loop-name
+    "SIM102",  # collapsible-if
+    "SIM103",  # needless-bool
+    "SIM108",  # if-else-block-instead-of-if-exp
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-v --strict-markers"
 
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["hatchling"]
+build-backend = "hatchling.build"

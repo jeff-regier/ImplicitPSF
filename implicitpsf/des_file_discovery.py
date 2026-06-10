@@ -11,9 +11,6 @@ import re
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from pathlib import Path
-from threading import Lock
-from typing import Dict, List, Set
 
 from dl import authClient as ac
 from dl import storeClient as sc
@@ -41,7 +38,7 @@ def discover_directories(
 
     if resume and os.path.exists(progress_file):
         print(f"📊 Loading progress from {progress_file}")
-        with open(progress_file, "r") as f:
+        with open(progress_file) as f:
             progress = json.load(f)
         discovered_files = progress.get("discovered_files", [])
         processed_runs = set(progress.get("processed_runs", []))
@@ -51,7 +48,6 @@ def discover_directories(
         )
 
     start_time = time.time()
-    last_progress_time = start_time
 
     try:
         # Fixed to Y5A1 only
@@ -86,7 +82,7 @@ def discover_directories(
                 continue
 
             print(
-                f"    [{i+1}/{len(run_dirs)}] Scanning {run_dir} (Directories: {len(discovered_files):,})"
+                f"    [{i + 1}/{len(run_dirs)}] Scanning {run_dir} (Directories: {len(discovered_files):,})"
             )
 
             run_path = f"{base_path}/{run_dir}"
@@ -148,11 +144,11 @@ def discover_directories(
                                                 return [
                                                     immask_path
                                                 ], 1  # Return directory path and exposure count
-                                        except:
+                                        except Exception:
                                             continue
 
                                     return [], 0  # No valid immask directory found
-                                except:
+                                except Exception:
                                     return [], 0
 
                             # Use ThreadPoolExecutor for parallel processing
@@ -169,7 +165,7 @@ def discover_directories(
                                         dir_paths, exp_count = future.result()
                                         batch_dirs.extend(dir_paths)
                                         total_exposures += exp_count
-                                    except Exception as e:
+                                    except Exception:
                                         continue
 
                             # Add all collected directory paths
@@ -179,10 +175,10 @@ def discover_directories(
 
                             # Report progress after completing each night
                             print(
-                                f"        {date_dir} ({date_idx+1}/{len(date_dirs)}): {len(batch_dirs)} directories, {len(date_exposures)} exposures - Total: {len(discovered_files):,}"
+                                f"        {date_dir} ({date_idx + 1}/{len(date_dirs)}): {len(batch_dirs)} directories, {len(date_exposures)} exposures - Total: {len(discovered_files):,}"
                             )
 
-                    except:
+                    except Exception:
                         continue
 
                 if run_files > 0:
@@ -228,20 +224,20 @@ def discover_directories(
 
         total_time = time.time() - start_time
 
-        print(f"\n{'='*50}")
+        print(f"\n{'=' * 50}")
         print("DISCOVERY COMPLETE")
-        print(f"{'='*50}")
+        print(f"{'=' * 50}")
         print(f"📊 Total directories discovered: {len(discovered_files):,}")
         print(f"📊 Total exposures: {stats['total_exposures']:,}")
         print(f"📊 Total runs: {stats['total_runs']:,}")
         print(f"📁 Directory list saved to: {output_file}")
-        print(f"⏱️  Total time: {total_time/60:.1f} minutes")
-        print(f"⚡ Rate: {len(discovered_files)/(total_time/60):.0f} directories/minute")
+        print(f"⏱️  Total time: {total_time / 60:.1f} minutes")
+        print(f"⚡ Rate: {len(discovered_files) / (total_time / 60):.0f} directories/minute")
 
         # Estimate total files that would be in these directories
         estimated_files = len(discovered_files) * 61  # ~61 files per immask directory
         print(f"💡 Estimated total FITS files: {estimated_files:,} (~61 files per directory)")
-        print(f"💡 To expand to full file paths, you can use the known DES naming pattern")
+        print("💡 To expand to full file paths, you can use the known DES naming pattern")
 
     except Exception as e:
         print(f"❌ Discovery failed: {e}")
@@ -271,7 +267,7 @@ def main():
 
     args = parser.parse_args()
 
-    print(f"\n🎯 Target survey: Y5A1 (hardcoded)")
+    print("\n🎯 Target survey: Y5A1 (hardcoded)")
     if args.run:
         print(f"🎯 Target run: {args.run} (single run mode)")
     print(f"📁 Output file: {args.output}")
@@ -288,10 +284,10 @@ def main():
     )
 
     if success:
-        print(f"\n✅ Discovery completed successfully!")
-        print(f"📋 Next step: Use des_bulk_download.py to download files")
+        print("\n✅ Discovery completed successfully!")
+        print("📋 Next step: Use des_bulk_download.py to download files")
     else:
-        print(f"\n❌ Discovery failed")
+        print("\n❌ Discovery failed")
         sys.exit(1)
 
 

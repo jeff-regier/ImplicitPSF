@@ -1,3 +1,5 @@
+from typing import ClassVar
+
 import pytorch_lightning as pl
 import torch
 from torch.utils.data import DataLoader, TensorDataset
@@ -29,7 +31,7 @@ class Catalog:
 class StarParamsDistribution(torch.distributions.Distribution):
     """Custom distribution for generating star parameters for an arbitrary number of stars."""
 
-    arg_constraints = {}
+    arg_constraints: ClassVar[dict] = {}
 
     def __init__(
         self,
@@ -50,7 +52,7 @@ class StarParamsDistribution(torch.distributions.Distribution):
         self.margin = margin
         self.flux_dist = torch.distributions.Uniform(1000.0, 2000.0)
 
-    def sample(self, sample_shape=torch.Size(), generator=None):
+    def sample(self, sample_shape=(), generator=None):
         """Generate star parameters: (flux1, x1, y1, flux2, x2, y2, ...) for each image."""
         if sample_shape:
             raise ValueError("sample_shape is not supported")
@@ -58,7 +60,7 @@ class StarParamsDistribution(torch.distributions.Distribution):
         dims = (self.n_images, self.max_sources)
 
         # objected positions within the image are from [-0.5, to image_size - 0.5]
-        positions = torch.rand(dims + (2,), generator=generator) * self.image_size - 0.5
+        positions = torch.rand((*dims, 2), generator=generator) * self.image_size - 0.5
         # avoid potential weird boundary issues
         positions = positions.clamp(-0.5 + 1e-6, self.image_size - 0.5 - 1e-6)
 
@@ -81,7 +83,7 @@ class StarImageDistribution(torch.distributions.Distribution):
 
     N_ELEC_PER_NMGY = 1000.0
 
-    arg_constraints = {}  # No constraints on arguments
+    arg_constraints: ClassVar[dict] = {}  # No constraints on arguments
 
     def __init__(
         self,
@@ -125,7 +127,7 @@ class StarImageDistribution(torch.distributions.Distribution):
         # Original Gaussian PSF implementation
         x_coords = torch.arange(self.patch_size, dtype=torch.float32, device=self.catalog.device)
         y_coords = torch.arange(self.patch_size, dtype=torch.float32, device=self.catalog.device)
-        X, Y = torch.meshgrid(x_coords, y_coords, indexing="xy")
+        grid_x, grid_y = torch.meshgrid(x_coords, y_coords, indexing="xy")
 
         # Calculate star position within patch using astronomical convention
         # Star position within patch, accounting for centering offset
@@ -183,10 +185,10 @@ class StarImageDistribution(torch.distributions.Distribution):
         y_pos_exp = star_patch_y[..., None, None]
         fluxes_exp = self.catalog.fluxes[..., None, None]
         sigma_exp = spatially_varying_sigma[..., None, None]  # Expand for broadcasting
-        X_exp = X[None, None, :, :]
-        Y_exp = Y[None, None, :, :]
-        dx = X_exp - x_pos_exp
-        dy = Y_exp - y_pos_exp
+        grid_x_exp = grid_x[None, None, :, :]
+        grid_y_exp = grid_y[None, None, :, :]
+        dx = grid_x_exp - x_pos_exp
+        dy = grid_y_exp - y_pos_exp
         sigma2 = sigma_exp**2
         norm = 1.0 / (2.0 * torch.pi * sigma2)
         exp_term = torch.exp(-0.5 * (dx**2 + dy**2) / sigma2)
@@ -223,8 +225,8 @@ class StarImageDistribution(torch.distributions.Distribution):
 
         # Convert astronomical coordinates to canvas coordinates with centered patches
         # 1. Convert to array coordinates: astronomical + 0.5
-        # 2. Center patches: subtract patch_half_size, then add it back to avoid negative indices
-        # Net effect: patch_corner = floor(array_pos - patch_half_size + patch_half_size) = floor(array_pos)
+        # 2. Center patches: subtract patch_half_size, then add it back to avoid negative
+        #    indices; net effect: patch_corner = floor(array_pos)
         array_positions = self.catalog.positions + 0.5
         patch_corner_positions = array_positions.floor().long()
 
@@ -268,8 +270,10 @@ class StarImageDistribution(torch.distributions.Distribution):
 
         return expected_images
 
-    def sample(self, sample_shape=torch.Size(), generator=None):
+    def sample(self, sample_shape=(), generator=None):
         """Generate an image by rendering stars with Gaussian PSF and shot noise."""
+        if sample_shape:
+            raise ValueError("sample_shape is not supported")
         patches = self._render_patches()
 
         if self.as_patches:
@@ -345,7 +349,7 @@ class StarDataModule(pl.LightningDataModule):
         self.batch_size = batch_size
         self.seed = seed
 
-    def setup(self, stage=None):
+    def setup(self, stage=None):  # noqa: ARG002 (required by the Lightning DataModule API)
         print("Generating star data...")
         g = torch.Generator().manual_seed(self.seed)
 

@@ -10,7 +10,6 @@ import re
 import time
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 import astroscrappy
 import h5py
@@ -58,14 +57,14 @@ CONFIG = {
 }
 
 
-def load_directories_list(directories_file: str = "des_directories.txt") -> List[str]:
+def load_directories_list(directories_file: str = "des_directories.txt") -> list[str]:
     """
     Load directory list and convert to local paths
     """
     print(f"📋 Loading directories from {directories_file}...")
 
     directories = []
-    with open(directories_file, "r") as f:
+    with open(directories_file) as f:
         for line in f:
             line = line.strip()
             if line and line.startswith("des_dr2://"):
@@ -196,7 +195,7 @@ def worker_process_directories(process_id: int, directories_subset: list) -> dic
                         f"📈 Process {process_id}: {progress_pct:.1f}% complete ({process_processed_dirs}/{len(directories_subset)} dirs, {total_buffered} stars buffered, {buffer_mb:.0f}MB)"
                     )
 
-            except (OSError, PermissionError) as e:
+            except (OSError, PermissionError):
                 process_safe_print(
                     f"⚠️  Process {process_id}: Cannot access directory {os.path.relpath(directory, CONFIG['local_data_dir'])}"
                 )
@@ -237,7 +236,7 @@ def worker_process_directories(process_id: int, directories_subset: list) -> dic
     }
 
 
-def load_fits_image(fits_path: str) -> Optional[Tuple[np.ndarray, WCS, Dict]]:
+def load_fits_image(fits_path: str) -> tuple[np.ndarray, WCS, dict] | None:
     """
     Load FITS image and extract metadata
     Returns: (image_data, wcs, metadata)
@@ -266,14 +265,14 @@ def load_fits_image(fits_path: str) -> Optional[Tuple[np.ndarray, WCS, Dict]]:
                         elif "truncated" in str(data_error).lower():
                             print(f"    ❌ Error loading {fits_path}: Truncated FITS file")
                         else:
-                            print(f"    ❌ Error loading {fits_path}: {str(data_error)}")
+                            print(f"    ❌ Error loading {fits_path}: {data_error!s}")
                         return None
                 else:
                     try:
                         image_data = hdul[0].data.astype(np.float32)
                         header = hdul[0].header
                     except (OSError, ValueError, MemoryError) as data_error:
-                        print(f"    ❌ Error loading {fits_path}: {str(data_error)}")
+                        print(f"    ❌ Error loading {fits_path}: {data_error!s}")
                         return None
 
             # Extract WCS
@@ -324,7 +323,7 @@ def load_fits_image(fits_path: str) -> Optional[Tuple[np.ndarray, WCS, Dict]]:
         return None
 
 
-def detect_sources_sep(image_data: np.ndarray) -> Tuple[np.ndarray, pd.DataFrame]:
+def detect_sources_sep(image_data: np.ndarray) -> tuple[np.ndarray, pd.DataFrame]:
     """
     Use SEP to detect sources in the image
     Returns: (background_subtracted_image, sources_catalog)
@@ -367,7 +366,7 @@ def detect_sources_sep(image_data: np.ndarray) -> Tuple[np.ndarray, pd.DataFrame
 
             if CONFIG["verbose"]:
                 print(
-                    f"    ✅ Cosmic ray detection: {n_cosmic_rays} pixels ({cosmic_ray_fraction*100:.2f}%) flagged"
+                    f"    ✅ Cosmic ray detection: {n_cosmic_rays} pixels ({cosmic_ray_fraction * 100:.2f}%) flagged"
                 )
 
         except Exception as e:
@@ -382,7 +381,7 @@ def detect_sources_sep(image_data: np.ndarray) -> Tuple[np.ndarray, pd.DataFrame
         bkg_rms = bkg.globalrms
         if CONFIG["verbose"]:
             print(f"    ✅ SEP background: median={np.median(bkg.back()):.1f}, RMS={bkg_rms:.1f}")
-    except:
+    except Exception:
         # Fallback to simple background subtraction
         median_bkg = np.median(image_data)
         mad = np.median(np.abs(image_data - median_bkg))
@@ -447,7 +446,7 @@ def detect_sources_sep(image_data: np.ndarray) -> Tuple[np.ndarray, pd.DataFrame
             print(f"    ✅ SEP detected {len(sources_df)} sources")
 
         return image_sub, sources_df
-    except:
+    except Exception:
         return image_sub, pd.DataFrame()
 
 
@@ -596,8 +595,8 @@ def detect_edge_contamination(cutout: np.ndarray) -> bool:
         return True  # Too small, suspicious
 
     # Calculate statistics
-    edge_median = np.median(all_edges)
-    center_median = np.median(center_region)
+    np.median(all_edges)
+    np.median(center_region)
     edge_std = np.std(all_edges)
     center_std = np.std(center_region)
 
@@ -614,10 +613,7 @@ def detect_edge_contamination(cutout: np.ndarray) -> bool:
     # Flag if edge pixels have systematic pattern (like edge artifacts)
     edge_mean = np.mean(all_edges)
     center_mean = np.mean(center_region)
-    if abs(edge_mean - center_mean) > 2 * center_std and abs(edge_mean - center_mean) > 10:
-        return True
-
-    return False
+    return bool(abs(edge_mean - center_mean) > 2 * center_std and abs(edge_mean - center_mean) > 10)
 
 
 def detect_background_gradient(cutout: np.ndarray) -> bool:
@@ -650,7 +646,7 @@ def detect_background_gradient(cutout: np.ndarray) -> bool:
     try:
         # Fit a plane to the background: z = a*x + b*y + c
         A = np.column_stack([background_x, background_y, np.ones(len(background_x))])
-        coeffs, residuals, rank, _ = np.linalg.lstsq(A, background_pixels, rcond=None)
+        coeffs, _residuals, rank, _ = np.linalg.lstsq(A, background_pixels, rcond=None)
 
         if rank < 3:  # Singular matrix
             return False
@@ -683,7 +679,7 @@ def detect_background_gradient(cutout: np.ndarray) -> bool:
     return False
 
 
-def detect_extended_source(cutout: np.ndarray, psf_fwhm: float = None) -> bool:
+def detect_extended_source(cutout: np.ndarray, psf_fwhm: float | None = None) -> bool:
     """
     Detect extended sources (galaxies) based on cutout analysis.
     Uses PSF-adaptive thresholds when PSF FWHM is available.
@@ -797,7 +793,7 @@ def detect_extended_source(cutout: np.ndarray, psf_fwhm: float = None) -> bool:
 
 
 def reclassify_star_based_on_cutout_isolation(
-    cutout: np.ndarray, current_type: str, psf_fwhm: float = None
+    cutout: np.ndarray, current_type: str, psf_fwhm: float | None = None
 ) -> str:
     """
     Reclassify a star based on cutout isolation analysis.
@@ -839,7 +835,7 @@ def reclassify_star_based_on_cutout_isolation(
         return "predictor"  # Still useful for context but not for training
 
 
-def has_companions_in_cutout(cutout: np.ndarray, threshold: float = None) -> bool:
+def has_companions_in_cutout(cutout: np.ndarray, threshold: float | None = None) -> bool:
     """
     Detect companions in a cutout using connected component analysis.
     Returns True if multiple well-separated sources are detected.
@@ -882,7 +878,7 @@ def has_companions_in_cutout(cutout: np.ndarray, threshold: float = None) -> boo
 
     # Only consider components with reasonable size (at least 3 pixels)
     significant_components = []
-    for i, (center, size) in enumerate(zip(component_centers, component_sizes)):
+    for i, (center, size) in enumerate(zip(component_centers, component_sizes, strict=False)):
         if size >= 3:  # Must have at least 3 connected pixels
             significant_components.append((center, size, i + 1))
 
@@ -892,8 +888,8 @@ def has_companions_in_cutout(cutout: np.ndarray, threshold: float = None) -> boo
     # Check separation between significant components
     for i in range(len(significant_components)):
         for j in range(i + 1, len(significant_components)):
-            center1, size1, label1 = significant_components[i]
-            center2, size2, label2 = significant_components[j]
+            center1, size1, _label1 = significant_components[i]
+            center2, size2, _label2 = significant_components[j]
 
             # Calculate distance between centers
             dist = np.sqrt((center1[0] - center2[0]) ** 2 + (center1[1] - center2[1]) ** 2)
@@ -1003,7 +999,7 @@ def compute_star_quality_metrics(sources_df: pd.DataFrame) -> pd.DataFrame:
     return sources_df
 
 
-def select_exposure_stars(sources_df: pd.DataFrame, image_shape: Tuple[int, int]) -> pd.DataFrame:
+def select_exposure_stars(sources_df: pd.DataFrame, image_shape: tuple[int, int]) -> pd.DataFrame:
     """
     Select exactly 1024 sources per exposure, prioritizing brightness over quality.
     Fill all slots aggressively - galaxies occasionally sneaking in is fine.
@@ -1120,8 +1116,8 @@ def estimate_psf_fwhm(stars_df: pd.DataFrame) -> float:
 
 
 def extract_star_cutouts(
-    image_data: np.ndarray, stars_df: pd.DataFrame, metadata: Dict, patch_size: int = 32
-) -> List[Dict]:
+    image_data: np.ndarray, stars_df: pd.DataFrame, metadata: dict, patch_size: int = 32
+) -> list[dict]:
     """
     Extract exactly 1024 cutouts per exposure, padding with zeros if necessary.
     """
@@ -1135,8 +1131,8 @@ def extract_star_cutouts(
     # Extract real star cutouts
     valid_stars = 0
     for _, star in stars_df.iterrows():
-        x_center = int(round(star["x"]))
-        y_center = int(round(star["y"]))
+        x_center = round(star["x"])
+        y_center = round(star["y"])
 
         # Extract cutout
         y_start = y_center - half_patch
@@ -1252,7 +1248,7 @@ def extract_star_cutouts(
     return cutouts
 
 
-def process_fits_file(fits_path: str) -> List[Dict]:
+def process_fits_file(fits_path: str) -> list[dict]:
     """
     Process a single FITS file and extract star cutouts
     """
@@ -1263,10 +1259,10 @@ def process_fits_file(fits_path: str) -> List[Dict]:
     if result is None:
         return []
 
-    image_data, wcs, metadata = result
+    image_data, _wcs, metadata = result
     print(f"  📐 Image shape: {image_data.shape}")
     print(f"  🔭 Exposure: {metadata['exposure_id']}, Band: {metadata['band']}")
-    print(f"  ⏱️  ExpTime: {metadata['exptime']:.1f}s, Seeing: {metadata['seeing']:.2f}\"")
+    print(f'  ⏱️  ExpTime: {metadata["exptime"]:.1f}s, Seeing: {metadata["seeing"]:.2f}"')
 
     # Detect sources with SEP
     image_sub, sources_df = detect_sources_sep(image_data)
@@ -1291,7 +1287,7 @@ def process_fits_file(fits_path: str) -> List[Dict]:
     return star_cutouts
 
 
-def process_fits_file_quiet(fits_path: str) -> List[Dict]:
+def process_fits_file_quiet(fits_path: str) -> list[dict]:
     """
     Process a single FITS file and extract star cutouts (quiet version for threading)
     """
@@ -1301,7 +1297,7 @@ def process_fits_file_quiet(fits_path: str) -> List[Dict]:
         if result is None:
             return []
 
-        image_data, wcs, metadata = result
+        image_data, _wcs, metadata = result
 
         # Detect sources with SEP
         image_sub, sources_df = detect_sources_sep(image_data)
@@ -1334,7 +1330,7 @@ def process_fits_file_quiet(fits_path: str) -> List[Dict]:
         return []
 
 
-def save_batch_pytorch(all_star_data: List[Dict], output_file: str):
+def save_batch_pytorch(all_star_data: list[dict], output_file: str):
     """
     Save all extracted star data to PyTorch file with exposure-based tensors (512, 32, 32)
     """
@@ -1448,7 +1444,7 @@ def save_batch_pytorch(all_star_data: List[Dict], output_file: str):
         )
 
 
-def save_batch_hdf5(all_star_data: List[Dict], output_file: str):
+def save_batch_hdf5(all_star_data: list[dict], output_file: str):
     """
     Save all extracted star data to HDF5 file with exposure-based arrays (512, 32, 32)
     """
@@ -1587,14 +1583,14 @@ def main():
     # Set verbose mode for main function
     CONFIG["verbose"] = True
 
-    print(f"🔧 Configuration:")
+    print("🔧 Configuration:")
     print(f"  Data directory: {CONFIG['local_data_dir']}")
     print(f"  Patch size: {CONFIG['patch_size']}x{CONFIG['patch_size']}")
     print(f"  Stars per exposure: {CONFIG['stars_per_exposure']} (fixed count)")
-    print(f"  Two-tier selection: Clean stars + bright predictor stars")
+    print("  Two-tier selection: Clean stars + bright predictor stars")
     print(f"  Number of processes: {CONFIG['num_processes']}")
-    print(f"  Target file size: ~1GB per HDF5 file")
-    print(f"  Exposures never split across files")
+    print("  Target file size: ~1GB per HDF5 file")
+    print("  Exposures never split across files")
     print(f"  Detection threshold: {CONFIG['detection_threshold']} σ")
     print(f"  FWHM range: {CONFIG['fwhm_min']:.1f} - {CONFIG['fwhm_max']:.1f} pixels")
     print(f"  Max ellipticity: {CONFIG['ellipticity_max']:.2f}")
@@ -1603,7 +1599,7 @@ def main():
     print(f"  Crowding radius: {CONFIG['crowding_radius']:.1f} pixels (crowding filter)")
     print(f"  Verbose mode: {'ON' if CONFIG['verbose'] else 'OFF'}")
 
-    print(f"\\n🔇 Note: Verbose mode disabled during multiprocessing to reduce output noise")
+    print("\\n🔇 Note: Verbose mode disabled during multiprocessing to reduce output noise")
 
     # Load directories from des_directories.txt
     directories = load_directories_list("des_directories.txt")
@@ -1625,7 +1621,7 @@ def main():
         partition = directories[start_idx:end_idx]
         directory_partitions.append(partition)
         print(
-            f"📂 Process {i}: assigned {len(partition)} directories (indices {start_idx}-{end_idx-1})"
+            f"📂 Process {i}: assigned {len(partition)} directories (indices {start_idx}-{end_idx - 1})"
         )
 
     print(
@@ -1645,7 +1641,7 @@ def main():
             futures.append(future)
 
         print(f"✅ All {CONFIG['num_processes']} processes launched successfully")
-        print(f"⚡ Processes running independently...")
+        print("⚡ Processes running independently...")
         print(f"🎯 Target: Process {total_dirs} directories across all processes")
         print()
 
@@ -1668,15 +1664,15 @@ def main():
     total_processed_files = sum(r["processed_files"] for r in results)
     total_successful_files = sum(r["successful_files"] for r in results)
 
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print("MULTIPROCESSING EXTRACTION COMPLETE")
-    print(f"{'='*70}")
+    print(f"{'=' * 70}")
     print(f"✅ Total directories processed: {total_processed_dirs}/{total_dirs}")
     print(f"✅ Total files processed: {total_processed_files}")
     print(f"✅ Successful files: {total_successful_files}")
-    print(f"⏱️  Total time: {total_time/60:.1f} minutes")
+    print(f"⏱️  Total time: {total_time / 60:.1f} minutes")
     if total_time > 0:
-        print(f"📈 Processing rate: {total_processed_files/total_time*60:.1f} files/minute")
+        print(f"📈 Processing rate: {total_processed_files / total_time * 60:.1f} files/minute")
 
     # List all output files
     output_dir = Path("/data/scratch/regier/sep_des_stars")
@@ -1687,7 +1683,7 @@ def main():
         total_stars = 0
         total_size = 0
 
-        print(f"\n📁 Output files:")
+        print("\n📁 Output files:")
         for f in sorted(process_files):
             size_mb = f.stat().st_size / (1024**2)
             total_size += size_mb
@@ -1698,15 +1694,15 @@ def main():
                     num_stars = hf.attrs["num_stars"]
                     total_stars += num_stars
                 print(f"    {f.name}: {num_stars} stars, {size_mb:.1f} MB")
-            except:
+            except Exception:
                 print(f"    {f.name}: {size_mb:.1f} MB")
 
-        print(f"\n📊 Summary:")
+        print("\n📊 Summary:")
         print(f"    📁 Total output files: {len(process_files)}")
         print(f"    ⭐ Total stars extracted: {total_stars}")
         print(f"    💾 Total output size: {total_size:.1f} MB")
         if total_time > 0:
-            print(f"    📈 Stars per minute: {total_stars/total_time*60:.0f}")
+            print(f"    📈 Stars per minute: {total_stars / total_time * 60:.0f}")
     else:
         print("\n❌ No output files found!")
 

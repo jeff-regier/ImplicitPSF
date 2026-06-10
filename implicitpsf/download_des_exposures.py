@@ -5,6 +5,7 @@ Download files from directories discovered by des_file_discovery.py
 """
 
 import argparse
+import contextlib
 import json
 import os
 import re
@@ -48,11 +49,11 @@ def validate_fits_file(file_path: Path, verbose=False) -> bool:
                 # Check if file has extensions and can read basic header
                 if len(hdul) == 0:
                     if verbose:
-                        print(f"    ❌ FITS validation failed: No extensions found")
+                        print("    ❌ FITS validation failed: No extensions found")
                     return False
 
                 # Try to access the header of the primary extension
-                header = hdul[0].header
+                _ = hdul[0].header
 
                 # Skip complex size validation for compressed files (.fits.fz)
                 # Compression ratios can vary dramatically (5:1 to 20:1 or more)
@@ -73,7 +74,7 @@ def validate_fits_file(file_path: Path, verbose=False) -> bool:
                         else:
                             if verbose:
                                 print(
-                                    f"    ❌ FITS validation failed: Invalid image header structure"
+                                    "    ❌ FITS validation failed: Invalid image header structure"
                                 )
                             return False
 
@@ -198,10 +199,9 @@ def download_directory(
         # Announce completion with more details
         if downloaded > 0:
             print(f"✅ Completed: {dir_path} ({downloaded} files, {total_size_mb:.1f} MB)")
-        else:
-            # Don't print redundant skip messages - already printed above with exposure ID
-            if not (ccd_filter and original_count > 0 and len(fits_files) == 0):
-                print(f"⚠️  {exposure_id}: No files downloaded (found {len(fits_files)} FITS files)")
+        # Don't print redundant skip messages - already printed above with exposure ID
+        elif not (ccd_filter and original_count > 0 and len(fits_files) == 0):
+            print(f"⚠️  {exposure_id}: No files downloaded (found {len(fits_files)} FITS files)")
 
         return {
             "directory": dir_path,
@@ -288,12 +288,10 @@ def download_file(file_path: str, local_base_dir: str, verbose=False, max_retrie
                 local_path.unlink()
                 if verbose:
                     print(f"  🗑️ Removed empty file: {parts[-1]}")
-        except Exception as e:
+        except Exception:
             # If we can't check the file, remove it and download
-            try:
+            with contextlib.suppress(BaseException):
                 local_path.unlink()
-            except:
-                pass
             if verbose:
                 print(f"  ⚠️ Removed corrupted file: {parts[-1]}")
 
@@ -306,7 +304,7 @@ def download_file(file_path: str, local_base_dir: str, verbose=False, max_retrie
                 wait_time = 2 ** (attempt - 1)
                 if verbose:
                     print(
-                        f"  🔄 Retry {attempt}/{max_retries-1} for {parts[-1]} (waiting {wait_time}s)"
+                        f"  🔄 Retry {attempt}/{max_retries - 1} for {parts[-1]} (waiting {wait_time}s)"
                     )
                 time.sleep(wait_time)
             elif verbose:
@@ -380,7 +378,7 @@ def download_directories(
 
     # Load directory list
     print(f"📋 Loading directory list from {directory_list_path}")
-    with open(directory_list_path, "r") as f:
+    with open(directory_list_path) as f:
         all_directories = [line.strip() for line in f if line.strip()]
 
     print(f"📊 Total directories to process: {len(all_directories):,}")
@@ -399,7 +397,7 @@ def download_directories(
 
     if resume and os.path.exists(progress_file):
         print(f"📊 Loading progress from {progress_file}")
-        with open(progress_file, "r") as f:
+        with open(progress_file) as f:
             progress = json.load(f)
         completed_directories = set(progress.get("completed_directories", []))
         failed_directories = set(progress.get("failed_directories", []))
@@ -443,7 +441,7 @@ def download_directories(
         else:
             print(f"🔧 CCD filter: {len(ccd_list)} CCDs ({min(ccd_list)}-{max(ccd_list)})")
     else:
-        print(f"🔧 CCD filter: All CCDs (1-62)")
+        print("🔧 CCD filter: All CCDs (1-62)")
 
     start_time = time.time()
 
@@ -484,20 +482,19 @@ def download_directories(
                         for error in result["errors"][:3]:
                             print(f"    Error: {error}")
 
+                # Check if this was a CCD filtering skip vs a real failure
+                elif len(result["errors"]) == 0:
+                    # No errors means CCD filtering excluded all files (expected)
+                    # Mark as completed so it doesn't get reprocessed on resume
+                    completed_directories.add(dir_path)
+                    stats["directories_completed"] += 1
                 else:
-                    # Check if this was a CCD filtering skip vs a real failure
-                    if len(result["errors"]) == 0:
-                        # No errors means CCD filtering excluded all files (expected)
-                        # Mark as completed so it doesn't get reprocessed on resume
-                        completed_directories.add(dir_path)
-                        stats["directories_completed"] += 1
-                    else:
-                        # Real download failures with errors
-                        failed_directories.add(dir_path)
-                        stats["directories_failed"] += 1
-                        print(f"  ❌ {dir_path}: Failed to download any files")
-                        # Show the actual errors
-                        print(f"    Errors: {result['errors'][:3]}")  # Show first 3 errors
+                    # Real download failures with errors
+                    failed_directories.add(dir_path)
+                    stats["directories_failed"] += 1
+                    print(f"  ❌ {dir_path}: Failed to download any files")
+                    # Show the actual errors
+                    print(f"    Errors: {result['errors'][:3]}")  # Show first 3 errors
 
                 # Progress update every 10 directories
                 if processed % 10 == 0:
@@ -523,20 +520,20 @@ def download_directories(
 
     total_time = time.time() - start_time
 
-    print(f"\n{'='*50}")
+    print(f"\n{'=' * 50}")
     print("DOWNLOAD COMPLETE")
-    print(f"{'='*50}")
+    print(f"{'=' * 50}")
     print(f"✅ Directories completed: {stats['directories_completed']:,}")
     print(f"❌ Directories failed: {stats['directories_failed']:,}")
     print(f"✅ Files downloaded: {stats['files_downloaded']:,}")
     print(f"❌ Files failed: {stats['files_failed']:,}")
     print(
-        f"💾 Total data downloaded: {stats['total_size_mb']:.1f} MB ({stats['total_size_mb']/1024:.2f} GB)"
+        f"💾 Total data downloaded: {stats['total_size_mb']:.1f} MB ({stats['total_size_mb'] / 1024:.2f} GB)"
     )
-    print(f"⏱️  Total time: {total_time/60:.1f} minutes")
+    print(f"⏱️  Total time: {total_time / 60:.1f} minutes")
     if stats["files_downloaded"] > 0:
-        print(f"⚡ Average rate: {stats['files_downloaded']/(total_time/60):.1f} files/minute")
-        print(f"⚡ Average speed: {stats['total_size_mb']/(total_time/60):.1f} MB/minute")
+        print(f"⚡ Average rate: {stats['files_downloaded'] / (total_time / 60):.1f} files/minute")
+        print(f"⚡ Average speed: {stats['total_size_mb'] / (total_time / 60):.1f} MB/minute")
 
     # Save final progress
     final_progress = {
@@ -610,7 +607,7 @@ def main():
 
     if not os.path.exists(args.file_list):
         print(f"❌ Directory list not found: {args.file_list}")
-        print(f"💡 Run des_file_discovery.py first to generate directory list")
+        print("💡 Run des_file_discovery.py first to generate directory list")
         sys.exit(1)
 
     print(f"\n📋 Directory list: {args.file_list}")
@@ -629,10 +626,10 @@ def main():
     )
 
     if success:
-        print(f"\n✅ Download completed successfully!")
+        print("\n✅ Download completed successfully!")
     else:
-        print(f"\n⚠️  Download completed with some failures")
-        print(f"💡 Use --resume to retry failed downloads")
+        print("\n⚠️  Download completed with some failures")
+        print("💡 Use --resume to retry failed downloads")
 
 
 if __name__ == "__main__":
