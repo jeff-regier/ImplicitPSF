@@ -18,6 +18,7 @@ import galsim
 import numpy as np
 import torch
 from astropy.io import fits
+from scipy.spatial import cKDTree
 
 from implicitpsf.splits import assign_split
 
@@ -31,6 +32,10 @@ FLUX_RANGE = (2e3, 1e5)
 FWHM_BASE_RANGE = (2.6, 5.4)  # pixels, per-exposure seeing
 FWHM_VARIATION = 0.15  # fractional field variation
 SHEAR_SCALE = 0.04
+COLOR_MEAN, COLOR_SCATTER = 1.0, 0.6  # g-i distribution of simulated stars
+CHROMATIC_FWHM_SLOPE = -0.03  # fractional FWHM change per mag of g-i (DCR/seeing-like)
+ISOLATION_RADIUS = 16.0  # match the real extraction: blended stars are context-only
+ISOLATION_FLUX_RATIO = 0.1
 
 
 def random_poly2(rng, scale):
@@ -53,15 +58,22 @@ def eval_poly2(coeffs, x, y):
     )
 
 
-def true_psf_params(field, x, y):
-    """Ground-truth (fwhm_pixels, g1, g2) of the PSF field at any position."""
+def true_psf_params(field, x, y, color=0.0):
+    """Ground-truth (fwhm_pixels, g1, g2) of the PSF field at any position and color.
+
+    In chromatic fields the FWHM shifts fractionally with the object's g-i color
+    (bluer -> broader, like differential chromatic refraction plus seeing's
+    wavelength dependence); achromatic fields ignore color entirely.
+    """
     fwhm = field["fwhm_base"] * (1.0 + eval_poly2(field["fwhm_poly"], x, y))
+    if field["chromatic"]:
+        fwhm = fwhm * (1.0 + CHROMATIC_FWHM_SLOPE * (color - COLOR_MEAN))
     g1 = eval_poly2(field["g1_poly"], x, y)
     g2 = eval_poly2(field["g2_poly"], x, y)
     return fwhm, g1, g2
 
 
-def sample_field(rng):
+def sample_field(rng, chromatic=False):
     return {
         "fwhm_base": rng.uniform(*FWHM_BASE_RANGE),
         "fwhm_poly": random_poly2(rng, FWHM_VARIATION / 2),
@@ -71,11 +83,12 @@ def sample_field(rng):
         "g2_poly": np.concatenate(
             [[rng.normal(0, SHEAR_SCALE)], random_poly2(rng, SHEAR_SCALE)[1:]]
         ),
+        "chromatic": chromatic,
     }
 
 
-def render_star(image, field, x, y, flux):
-    fwhm, g1, g2 = true_psf_params(field, x, y)
+def render_star(image, field, x, y, flux, color):
+    fwhm, g1, g2 = true_psf_params(field, x, y, color)
     profile = galsim.Moffat(beta=MOFFAT_BETA, fwhm=fwhm * PIXEL_SCALE, flux=flux)
     profile = profile.shear(g1=g1, g2=g2)
     stamp = profile.drawImage(
@@ -101,10 +114,10 @@ def wcs_header(exposure_seed):
     return header
 
 
-def simulate_exposure(exposure_seed, fits_dir):
+def simulate_exposure(exposure_seed, fits_dir, chromatic=False):
     """Render one exposure; returns the v2-schema per-exposure record."""
     rng = np.random.default_rng(exposure_seed)
-    field = sample_field(rng)
+    field = sample_field(rng, chromatic=chromatic)
     n_stars = rng.integers(*N_STARS_RANGE)
 
     half = PATCH // 2
@@ -112,10 +125,11 @@ def simulate_exposure(exposure_seed, fits_dir):
     x = rng.uniform(margin, WIDTH - margin, n_stars)
     y = rng.uniform(margin, HEIGHT - margin, n_stars)
     flux = np.exp(rng.uniform(np.log(FLUX_RANGE[0]), np.log(FLUX_RANGE[1]), n_stars))
+    color = np.clip(rng.normal(COLOR_MEAN, COLOR_SCATTER, n_stars), -0.5, 3.0)
 
     image = galsim.Image(WIDTH, HEIGHT, scale=PIXEL_SCALE, dtype=np.float32)
-    for x0, y0, flux0 in zip(x, y, flux, strict=True):
-        render_star(image, field, x0, y0, flux0)
+    for x0, y0, flux0, color0 in zip(x, y, flux, color, strict=True):
+        render_star(image, field, x0, y0, flux0, color0)
     sci = image.array + rng.normal(0, NOISE_SIGMA, image.array.shape).astype(np.float32)
 
     header = wcs_header(exposure_seed)
@@ -146,8 +160,19 @@ def simulate_exposure(exposure_seed, fits_dir):
     cols = np.round(x).astype(int) - half
     cutouts = windows[rows, cols].astype(np.float32)
 
+    # blended stars poison a single-star likelihood: like the real extraction,
+    # only isolated stars are clean (type 0); the rest are context-only (type 1)
+    tree = cKDTree(np.column_stack([x, y]))
+    pairs = tree.query_pairs(ISOLATION_RADIUS, output_type="ndarray")
+    isolated = np.ones(n_stars, dtype=bool)
+    if len(pairs) > 0:
+        first, second = pairs[:, 0], pairs[:, 1]
+        np.logical_and.at(isolated, first, ~(flux[second] > ISOLATION_FLUX_RATIO * flux[first]))
+        np.logical_and.at(isolated, second, ~(flux[first] > ISOLATION_FLUX_RATIO * flux[second]))
+    star_type = np.where(isolated, 0, 1).astype(np.uint8)
+
     n_slots = n_stars  # variable star counts; padding handled by fixed-slot packing
-    true_fwhm, true_g1, true_g2 = true_psf_params(field, x, y)
+    true_fwhm, true_g1, true_g2 = true_psf_params(field, x, y, color)
     return {
         "n_stars": int(n_slots),
         "cutouts": cutouts,
@@ -159,8 +184,8 @@ def simulate_exposure(exposure_seed, fits_dir):
         "sky": np.zeros(n_stars, dtype=np.float32),
         "x_pixel": x.astype(np.float32),
         "y_pixel": y.astype(np.float32),
-        "color": np.zeros(n_stars, dtype=np.float32),
-        "star_type": np.zeros(n_stars, dtype=np.uint8),
+        "color": color.astype(np.float32),
+        "star_type": star_type,
         "star_id": exposure_seed * 100_000 + np.arange(n_stars, dtype=np.int64),
         "true_fwhm": true_fwhm.astype(np.float32),
         "true_g1": true_g1.astype(np.float32),
@@ -235,11 +260,11 @@ def pack_records(records, n_slots):
     return data
 
 
-def worker(worker_id, seeds, out_dir, fits_dir, exposures_per_file):
+def worker(worker_id, seeds, out_dir, fits_dir, exposures_per_file, chromatic):
     records = []
     n_chunks = 0
     for seed in seeds:
-        records.append(simulate_exposure(seed, fits_dir))
+        records.append(simulate_exposure(seed, fits_dir, chromatic=chromatic))
         if len(records) == exposures_per_file:
             out_path = Path(out_dir) / f"desstars_sim_w{worker_id:02d}_{n_chunks:04d}.pt"
             torch.save(pack_records(records, max(N_STARS_RANGE)), out_path)
@@ -257,6 +282,9 @@ def main():
     parser.add_argument("--n-exposures", type=int, default=6000)
     parser.add_argument("--num-workers", type=int, default=6)
     parser.add_argument("--exposures-per-file", type=int, default=32)
+    parser.add_argument(
+        "--chromatic", action="store_true", help="PSF FWHM depends on star color (DCR-like)"
+    )
     args = parser.parse_args()
 
     Path(args.out_dir).mkdir(parents=True, exist_ok=True)
@@ -267,7 +295,7 @@ def main():
     processes = [
         mp.Process(
             target=worker,
-            args=(i, chunk, args.out_dir, args.fits_dir, args.exposures_per_file),
+            args=(i, chunk, args.out_dir, args.fits_dir, args.exposures_per_file, args.chromatic),
         )
         for i, chunk in enumerate(chunks)
     ]

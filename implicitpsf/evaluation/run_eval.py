@@ -75,8 +75,10 @@ def psfex_stamps(data, index, fit_mask, reserved_mask, workdir):
     return render_psfex(psf_path, fits_path, x[reserved_mask], y[reserved_mask])
 
 
-def implicit_stamps(model, data, index, reserved_mask):
+def implicit_stamps(model, data, index, reserved_mask, zero_color=False):
     batch = make_batch(data, [index])
+    if zero_color:  # models trained with --zero-color must be queried the same way
+        batch["colors"] = torch.zeros_like(batch["colors"])
     reserved = torch.from_numpy(reserved_mask).unsqueeze(0)
     stamps = render_implicit(model, batch, reserved)
     return stamps[0][torch.from_numpy(reserved_mask)].numpy()
@@ -126,7 +128,7 @@ def method_columns(model_stamps, data, index, reserved_mask):
     }
 
 
-def evaluate_exposure(model, data, index, reserved_ids, methods, workdir):
+def evaluate_exposure(model, data, index, reserved_ids, methods, workdir, zero_color=False):
     clean, reserved = exposure_masks(data, index, reserved_ids)
     fit_mask = clean & ~reserved
     if reserved.sum() < 5 or fit_mask.sum() < 20:
@@ -134,7 +136,7 @@ def evaluate_exposure(model, data, index, reserved_ids, methods, workdir):
 
     base = star_rows(data, index, reserved)
     renderers = {
-        "implicit": lambda: implicit_stamps(model, data, index, reserved),
+        "implicit": lambda: implicit_stamps(model, data, index, reserved, zero_color),
         "piff": lambda: piff_stamps(data, index, fit_mask, reserved, workdir),
         "psfex": lambda: psfex_stamps(data, index, fit_mask, reserved, workdir),
     }
@@ -160,6 +162,11 @@ def parse_args():
     parser.add_argument("--max-exposures", type=int, default=None)
     parser.add_argument("--num-workers", type=int, default=8)
     parser.add_argument(
+        "--zero-color",
+        action="store_true",
+        help="query the implicit model with zeroed colors (ablation)",
+    )
+    parser.add_argument(
         "--methods",
         nargs="+",
         default=["implicit", "piff", "psfex"],
@@ -180,7 +187,15 @@ def eval_file_group(args, file_name, exposures):
         reserved_ids = reserved_star_ids(manifest, exposure_id)
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                frame = evaluate_exposure(model, data, index, reserved_ids, args.methods, Path(tmp))
+                frame = evaluate_exposure(
+                    model,
+                    data,
+                    index,
+                    reserved_ids,
+                    args.methods,
+                    Path(tmp),
+                    zero_color=args.zero_color,
+                )
         except Exception:
             n_failed += 1
             print(f"FAILED {exposure_id}\n{traceback.format_exc()}")

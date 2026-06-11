@@ -81,7 +81,9 @@ def batch_producer(
     done_event.wait()
 
 
-def run_epoch_phase(model, optimizer, batch_queue, n_batches, phase, epoch, device):
+def run_epoch_phase(
+    model, optimizer, batch_queue, n_batches, phase, epoch, device, zero_color=False
+):
     """Consume one epoch's worth of batches for a phase; train if an optimizer is given."""
     losses = []
     with tqdm(total=n_batches, desc=f"{phase} {epoch}", ncols=120) as pbar:
@@ -91,6 +93,8 @@ def run_epoch_phase(model, optimizer, batch_queue, n_batches, phase, epoch, devi
                 raise RuntimeError(f"out-of-order batch in {phase} epoch {epoch}")
 
             batch = {key: batch_data[key].to(device) for key in BATCH_KEYS}
+            if zero_color:
+                batch["colors"] = torch.zeros_like(batch["colors"])
             loss = model.get_loss(batch)
             if optimizer is not None:
                 optimizer.zero_grad()
@@ -143,8 +147,15 @@ def parse_args():
     parser.add_argument("--hidden-dim", type=int, default=256)
     parser.add_argument("--decoder-dim", type=int, default=128)
     parser.add_argument("--n-heads", type=int, default=8)
+    parser.add_argument("--n-attn-layers", type=int, default=1)
+    parser.add_argument("--decoder-film", action="store_true")
+    parser.add_argument("--diagonal-coords", action="store_true")
+    parser.add_argument("--polar-coords", action="store_true")
     parser.add_argument("--context-dropout-max", type=float, default=0.5)
     parser.add_argument("--no-attention", action="store_true")
+    parser.add_argument(
+        "--zero-color", action="store_true", help="ablation: erase color conditioning"
+    )
     parser.add_argument(
         "--patience",
         type=int,
@@ -196,6 +207,10 @@ def main():
         weight_decay=args.weight_decay,
         use_attention=not args.no_attention,
         context_dropout_max=args.context_dropout_max,
+        n_attn_layers=args.n_attn_layers,
+        decoder_film=args.decoder_film,
+        diagonal_coords=args.diagonal_coords,
+        polar_coords=args.polar_coords,
     )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
@@ -218,11 +233,27 @@ def main():
         start = time.time()
         model.train()
         train_loss = run_epoch_phase(
-            model, optimizer, batch_queue, train_batches, "train", epoch, device
+            model,
+            optimizer,
+            batch_queue,
+            train_batches,
+            "train",
+            epoch,
+            device,
+            zero_color=args.zero_color,
         )
         model.eval()
         with torch.no_grad():
-            val_loss = run_epoch_phase(model, None, batch_queue, val_batches, "val", epoch, device)
+            val_loss = run_epoch_phase(
+                model,
+                None,
+                batch_queue,
+                val_batches,
+                "val",
+                epoch,
+                device,
+                zero_color=args.zero_color,
+            )
 
         lr = scheduler.get_last_lr()[0]
         scheduler.step()

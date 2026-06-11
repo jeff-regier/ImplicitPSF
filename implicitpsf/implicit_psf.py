@@ -1,3 +1,5 @@
+import math
+
 import pytorch_lightning as pl
 import torch
 from einops import rearrange
@@ -33,15 +35,45 @@ def stamp_offsets(positions, patch_size, oversample=1):
 
 
 class PSFDecoder(nn.Module):
-    """Implicit PSF decoder: intensity at continuous offsets from a star center."""
+    """Implicit PSF decoder: intensity at continuous offsets from a star center.
 
-    def __init__(self, feature_dim, patch_size, decoder_dim=128, n_freqs=8, use_features=True):
+    With film=True, per-star features modulate every hidden layer multiplicatively
+    (FiLM). Additive conditioning alone cannot produce angle-dependent profiles —
+    elliptical PSFs need the feature vector to gate coordinate channels.
+    """
+
+    N_HARMONICS = 5  # angular harmonics: 1, cos(t), sin(t), cos(2t), sin(2t)
+
+    def __init__(
+        self,
+        feature_dim,
+        patch_size,
+        decoder_dim=128,
+        n_freqs=8,
+        use_features=True,
+        film=False,
+        diagonal_coords=False,
+        polar_coords=False,
+    ):
         super().__init__()
         self.patch_size = patch_size
         self.n_freqs = n_freqs
         self.use_features = use_features
+        self.film = film
+        self.diagonal_coords = diagonal_coords
+        self.polar_coords = polar_coords
 
-        coord_dim = 4 * n_freqs  # sin/cos for u and v at n_freqs frequencies
+        if polar_coords:
+            # radial Fourier features times angular harmonics: ellipticity is spin-2,
+            # so cos(2t)/sin(2t) terms make BOTH e1 and e2 first-order learnable
+            # (cartesian-separable features learn only the axis-aligned component)
+            coord_dim = 2 * n_freqs * self.N_HARMONICS
+        else:
+            # sin/cos per axis per frequency; with diagonal_coords the 45-degree-rotated
+            # axes are featurized too — separable u/v features make e1 (axis-aligned
+            # elongation) learnable but starve e2, which needs u*v cross-terms
+            n_axes = 4 if diagonal_coords else 2
+            coord_dim = 2 * n_axes * n_freqs
         self.coord_embedding = nn.Sequential(
             nn.Linear(coord_dim, decoder_dim),
             nn.ReLU(inplace=True),
@@ -50,17 +82,47 @@ class PSFDecoder(nn.Module):
         if use_features:
             self.feature_projection = nn.Linear(feature_dim, decoder_dim)
 
-        self.pixel_mlp = nn.Sequential(
-            nn.Linear(decoder_dim, decoder_dim),
-            nn.ReLU(inplace=True),
-            nn.Linear(decoder_dim, decoder_dim),
-            nn.ReLU(inplace=True),
-            nn.Linear(decoder_dim, 1),
-            nn.Softplus(),  # strictly positive intensity
-        )
+        if film and use_features:
+            self.film_hidden = nn.ModuleList(nn.Linear(decoder_dim, decoder_dim) for _ in range(3))
+            self.film_generators = nn.ModuleList(
+                nn.Linear(feature_dim, 2 * decoder_dim) for _ in range(3)
+            )
+            self.film_head = nn.Sequential(nn.Linear(decoder_dim, 1), nn.Softplus())
+        else:
+            self.pixel_mlp = nn.Sequential(
+                nn.Linear(decoder_dim, decoder_dim),
+                nn.ReLU(inplace=True),
+                nn.Linear(decoder_dim, decoder_dim),
+                nn.ReLU(inplace=True),
+                nn.Linear(decoder_dim, 1),
+                nn.Softplus(),  # strictly positive intensity
+            )
 
     def _fourier_features(self, offsets):
         normalized = offsets / (self.patch_size // 2)
+        if self.polar_coords:
+            u, v = normalized[..., 0], normalized[..., 1]
+            radius = torch.sqrt(u * u + v * v + 1e-12)
+            theta = torch.atan2(v, u)
+            freqs = 2.0 ** torch.arange(self.n_freqs, device=offsets.device, dtype=offsets.dtype)
+            radial = radius.unsqueeze(-1) * (torch.pi * freqs)
+            radial = torch.cat([torch.sin(radial), torch.cos(radial)], dim=-1)
+            harmonics = torch.stack(
+                [
+                    torch.ones_like(theta),
+                    torch.cos(theta),
+                    torch.sin(theta),
+                    torch.cos(2 * theta),
+                    torch.sin(2 * theta),
+                ],
+                dim=-1,
+            )
+            features = radial.unsqueeze(-1) * harmonics.unsqueeze(-2)
+            return rearrange(features, "b s n f h -> b s n (f h)")
+        if self.diagonal_coords:
+            u, v = normalized[..., 0], normalized[..., 1]
+            rotated = torch.stack([(u + v), (u - v)], dim=-1) / math.sqrt(2.0)
+            normalized = torch.cat([normalized, rotated], dim=-1)
         freqs = 2.0 ** torch.arange(self.n_freqs, device=offsets.device, dtype=offsets.dtype)
         angles = normalized.unsqueeze(-1) * (torch.pi * freqs)
         angles = rearrange(angles, "b s n c f -> b s n (c f)")
@@ -79,6 +141,12 @@ class PSFDecoder(nn.Module):
         hidden = self.coord_embedding(self._fourier_features(offsets))
         if self.use_features:
             hidden = hidden + self.feature_projection(features).unsqueeze(2)
+
+        if self.film and self.use_features:
+            for layer, generator in zip(self.film_hidden, self.film_generators, strict=True):
+                scale, shift = generator(features).unsqueeze(2).chunk(2, dim=-1)
+                hidden = torch.relu(layer(hidden)) * (1.0 + scale) + shift
+            return self.film_head(hidden).squeeze(-1)
         return self.pixel_mlp(hidden).squeeze(-1)
 
 
@@ -102,6 +170,10 @@ class ImplicitPSF(pl.LightningModule):
         weight_decay=1e-6,
         use_attention=True,
         context_dropout_max=0.5,
+        n_attn_layers=1,
+        decoder_film=False,
+        diagonal_coords=False,
+        polar_coords=False,
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -112,6 +184,7 @@ class ImplicitPSF(pl.LightningModule):
         self.n_heads = n_heads
         self.use_attention = use_attention
         self.context_dropout_max = context_dropout_max
+        self.n_attn_layers = n_attn_layers
         self.learning_rate = learning_rate
         self.weight_decay = weight_decay
 
@@ -126,12 +199,39 @@ class ImplicitPSF(pl.LightningModule):
             nn.LayerNorm(hidden_dim),
         )
 
-        if self.use_attention:
+        # n_attn_layers == 1 is the original single-layer additive architecture and
+        # must keep its module names so earlier checkpoints load; >= 2 stacks
+        # residual cross-attention blocks with feed-forward layers (much stronger
+        # at extracting per-exposure seeing from context stamps)
+        if self.use_attention and n_attn_layers == 1:
             self.attention_layer = nn.MultiheadAttention(hidden_dim, n_heads, batch_first=True)
             self.attention_norm = nn.LayerNorm(hidden_dim)
+        elif self.use_attention:
+            self.attention_layers = nn.ModuleList(
+                nn.MultiheadAttention(hidden_dim, n_heads, batch_first=True)
+                for _ in range(n_attn_layers)
+            )
+            self.attention_norms = nn.ModuleList(
+                nn.LayerNorm(hidden_dim) for _ in range(n_attn_layers)
+            )
+            self.ffn_layers = nn.ModuleList(
+                nn.Sequential(
+                    nn.Linear(hidden_dim, 2 * hidden_dim),
+                    nn.ReLU(inplace=True),
+                    nn.Linear(2 * hidden_dim, hidden_dim),
+                )
+                for _ in range(n_attn_layers)
+            )
+            self.ffn_norms = nn.ModuleList(nn.LayerNorm(hidden_dim) for _ in range(n_attn_layers))
 
         self.psf_decoder = PSFDecoder(
-            hidden_dim, patch_size, decoder_dim=decoder_dim, use_features=self.use_attention
+            hidden_dim,
+            patch_size,
+            decoder_dim=decoder_dim,
+            use_features=self.use_attention,
+            film=decoder_film,
+            diagonal_coords=diagonal_coords,
+            polar_coords=polar_coords,
         )
 
     def _sinusoidal_position_encoding(self, positions):
@@ -186,17 +286,39 @@ class ImplicitPSF(pl.LightningModule):
 
         queries = pos_encodings + scalar_features
         keys = pos_encodings + scalar_features + image_features
-
         self_mask = torch.eye(n_stars, device=cutouts.device, dtype=torch.bool)
-        attn_output, _ = self.attention_layer(
-            queries,
-            keys,
-            keys,
-            attn_mask=self_mask,
-            key_padding_mask=~context_mask,
-            need_weights=False,
+
+        if self.n_attn_layers == 1:
+            attn_output, _ = self.attention_layer(
+                queries,
+                keys,
+                keys,
+                attn_mask=self_mask,
+                key_padding_mask=~context_mask,
+                need_weights=False,
+            )
+            return self.attention_norm(attn_output)
+
+        hidden = queries
+        layers = zip(
+            self.attention_layers,
+            self.attention_norms,
+            self.ffn_layers,
+            self.ffn_norms,
+            strict=True,
         )
-        return self.attention_norm(attn_output)
+        for attention, attn_norm, ffn, ffn_norm in layers:
+            attn_output, _ = attention(
+                hidden,
+                keys,
+                keys,
+                attn_mask=self_mask,
+                key_padding_mask=~context_mask,
+                need_weights=False,
+            )
+            hidden = attn_norm(hidden + attn_output)
+            hidden = ffn_norm(hidden + ffn(hidden))
+        return hidden
 
     def forward(self, cutouts, positions, colors, fluxes, context_mask, oversample=1):
         """Render unit-sum PSF stamps at every star's position.

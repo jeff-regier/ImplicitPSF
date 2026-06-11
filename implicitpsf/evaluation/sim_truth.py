@@ -26,7 +26,7 @@ from implicitpsf.datasets import load_exposure_file, make_batch
 from implicitpsf.evaluation.moments import PIXEL_SCALE, hsm_moments
 from implicitpsf.evaluation.run_eval import exposure_masks
 from implicitpsf.render import render_at
-from implicitpsf.simulate import HEIGHT, MOFFAT_BETA, PATCH, WIDTH, true_psf_params
+from implicitpsf.simulate import COLOR_MEAN, HEIGHT, MOFFAT_BETA, PATCH, WIDTH, true_psf_params
 from implicitpsf.splits import load_manifest, reserved_star_ids
 
 
@@ -37,31 +37,40 @@ def grid_positions(width, height, nx=6, ny=12, margin=40):
     return grid_x.ravel(), grid_y.ravel()
 
 
-def truth_stamps(field, x, y):
-    """Noiseless pixel-convolved truth stamps on the same grid as the models."""
+def truth_stamps(field, x, y, color):
+    """Noiseless pixel-convolved truth stamps on the data stamp grid.
+
+    Renders onto explicit bounds matching the corner = round(center) - half
+    convention: galsim's automatic bounds for even stamps with center= can land
+    one pixel off depending on the fractional part of the position.
+    """
+    half = PATCH // 2
     stamps = np.zeros((len(x), PATCH, PATCH))
     for index, (x0, y0) in enumerate(zip(x, y, strict=True)):
-        fwhm, g1, g2 = true_psf_params(field, float(x0), float(y0))
+        fwhm, g1, g2 = true_psf_params(field, float(x0), float(y0), color)
         profile = galsim.Moffat(beta=MOFFAT_BETA, fwhm=fwhm * PIXEL_SCALE)
         profile = profile.shear(g1=g1, g2=g2)
-        image = profile.drawImage(
-            nx=PATCH,
-            ny=PATCH,
-            scale=PIXEL_SCALE,
+        corner_x = round(float(x0)) - half + 1  # 1-based stamp corner
+        corner_y = round(float(y0)) - half + 1
+        bounds = galsim.BoundsI(corner_x, corner_x + PATCH - 1, corner_y, corner_y + PATCH - 1)
+        image = galsim.Image(bounds, scale=PIXEL_SCALE)
+        profile.drawImage(
+            image=image,
             center=galsim.PositionD(float(x0) + 1.0, float(y0) + 1.0),
+            add_to_image=True,
         )
         stamps[index] = image.array
     return stamps
 
 
-def implicit_grid_stamps(model, data, index, fit_mask, x, y):
+def implicit_grid_stamps(model, data, index, fit_mask, x, y, ref_color):
     batch = make_batch(data, [index])
     # restrict context to exactly the stars the baselines fit on
     batch = dict(batch)
     keep = torch.from_numpy(fit_mask)
     batch["flux"] = batch["flux"] * keep.unsqueeze(0)
     queries = torch.from_numpy(np.column_stack([x, y])).float()
-    colors = torch.zeros(len(x))
+    colors = torch.full((len(x),), ref_color)
     return render_at(model, batch, queries, colors).numpy()
 
 
@@ -70,13 +79,18 @@ def evaluate_exposure(model, data, index, reserved_ids, workdir):
     fit_mask = clean & ~reserved
 
     x, y = grid_positions(WIDTH, HEIGHT)
-    field = data["true_field"][index]
-    truth = truth_stamps(field, x, y)
+    field = {"chromatic": False, **data["true_field"][index]}  # migrate pre-chromatic files
+    # grid truth is evaluated at a reference color: the training-data mean for
+    # chromatic fields, 0 for achromatic ones (whose stars carry color 0)
+    ref_color = COLOR_MEAN if field["chromatic"] else 0.0
+    truth = truth_stamps(field, x, y, ref_color)
     truth_moments = hsm_moments(truth)
 
     cat_x = data["x_pixel"][index].numpy()
     workdir = Path(workdir)
-    renderers = {"implicit": lambda: implicit_grid_stamps(model, data, index, fit_mask, x, y)}
+    renderers = {
+        "implicit": lambda: implicit_grid_stamps(model, data, index, fit_mask, x, y, ref_color)
+    }
 
     def piff_grid():
         cat_path = workdir / "piff_cat.fits"
