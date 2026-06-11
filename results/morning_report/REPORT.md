@@ -122,3 +122,25 @@ real_noattn: 8,54.777926108538516,63.92475587002982,9.656680887261693e-05,1737.1
 ## Real-data baselines at scale
 pilot (25 exp): results/pilot_report/ | dress rehearsal (297 exp): results/real_val_dress.parquet
 PIFF: dT/T med +0.005, chi2 1.07 | PSFEx: +0.010, 1.05 (real val, all bands)
+
+---
+
+## Morning addendum (June 11, 08:45)
+
+Timeline correction: this report was assembled at 23:50 last night — the overnight work
+finished ~9 hours ahead of the projected schedule (duration estimates were conservative and
+the wall clock was never sampled; lesson recorded).
+
+Overnight since assembly:
+- **v5 (polar spin-2 features)** finished: corr(e2)=+0.97 but corr(e1)=+0.03 at its early
+  stop — the same one-component-first dynamic seen in v4's early epochs; v4 needed its full
+  schedule for both components. **v4 (diagonal coords) remains the champion**:
+  corr(e1)/corr(e2) = 0.92/0.97, |de| = 0.032, chi2 = 4.95 (PIFF 2.67, floor 1.0).
+- **real r-band run (v1 architecture) converged** at val chi2/dof = 30.6; all-band at 23.9
+  and falling; no-attention at 53.8 — attention helps ~2.2x on real data.
+- NOTE: all overnight real-data runs predate the architecture fixes (v1 arch). Real-data
+  runs with the v4 and v5 architectures launched this morning on GPUs 1 and 2 (batch 3;
+  the FiLM decoder is memory-heavier).
+
+Next: real-data v4 convergence -> calibration gate -> first real reserved-star comparison;
+v5 with a longer schedule; then M5 (render-based likelihood) gated by truth-through-loss.
