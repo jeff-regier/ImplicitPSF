@@ -5,7 +5,7 @@ repos:
         name: trailing-whitespace
         entry: uv run trailing-whitespace-fixer
         language: system
-        exclude: ^(.*fits|.*pt|.*pkl|.*npz|.*ckpt|.*png|.*inv|.*npy|.*pdf|.*jpg)
+        exclude: ^(.*fits|.*pt|.*pkl|.*npz|.*ckpt|.*png|.*inv|.*npy|.*pdf|.*jpg|.*parquet)
       - id: check-added-large-files
         name: check-added-large-files
         entry: uv run check-added-large-files
@@ -20,7 +20,7 @@ repos:
         name: end-of-file-fixer
         entry: uv run end-of-file-fixer
         language: system
-        exclude: ^(.*fits|.*pt|.*pkl|.*npz|.*ckpt|.*png|.*inv|.*npy|.*pdf|.*jpg)
+        exclude: ^(.*fits|.*pt|.*pkl|.*npz|.*ckpt|.*png|.*inv|.*npy|.*pdf|.*jpg|.*parquet)
       - id: ruff
         name: ruff
         entry: uv run ruff check --fix

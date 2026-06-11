@@ -33,3 +33,4 @@ checkpoints/
 *.pt
 des_directories.txt
 .ruff_cache/
+results/morning_report/.REPORT.md.swp
