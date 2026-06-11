@@ -21,7 +21,7 @@ from implicitpsf.baselines.catalogs import write_piff_catalog, write_psfex_ldac
 from implicitpsf.baselines.implicit_runner import load_model, render_implicit
 from implicitpsf.baselines.piff_runner import fit_piff, render_piff
 from implicitpsf.baselines.psfex_runner import fit_psfex, render_psfex
-from implicitpsf.datasets import load_exposure_file, make_batch
+from implicitpsf.datasets import load_exposure_file, make_batch, stable_seed
 from implicitpsf.evaluation.chi2 import reduced_chi2
 from implicitpsf.evaluation.moments import hsm_moments
 from implicitpsf.splits import load_manifest, reserved_star_ids
@@ -75,10 +75,13 @@ def psfex_stamps(data, index, fit_mask, reserved_mask, workdir):
     return render_psfex(psf_path, fits_path, x[reserved_mask], y[reserved_mask])
 
 
-def implicit_stamps(model, data, index, reserved_mask, zero_color=False):
+def implicit_stamps(model, data, index, reserved_mask, zero_color=False, context_mask=None):
     batch = make_batch(data, [index])
     if zero_color:  # models trained with --zero-color must be queried the same way
         batch["colors"] = torch.zeros_like(batch["colors"])
+    if context_mask is not None:
+        # strict same-information mode: attend only to the given fit stars
+        batch["flux"] = batch["flux"] * torch.from_numpy(context_mask).unsqueeze(0)
     reserved = torch.from_numpy(reserved_mask).unsqueeze(0)
     stamps = render_implicit(model, batch, reserved)
     return stamps[0][torch.from_numpy(reserved_mask)].numpy()
@@ -128,15 +131,27 @@ def method_columns(model_stamps, data, index, reserved_mask):
     }
 
 
-def evaluate_exposure(model, data, index, reserved_ids, methods, workdir, zero_color=False):
+def evaluate_exposure(
+    model, data, index, reserved_ids, methods, workdir, zero_color=False, fit_subset=None
+):
     clean, reserved = exposure_masks(data, index, reserved_ids)
     fit_mask = clean & ~reserved
     if reserved.sum() < 5 or fit_mask.sum() < 20:
         return None
 
+    context_mask = None
+    if fit_subset is not None:
+        # same k fit stars for every method (sample-efficiency sweep)
+        candidates = np.flatnonzero(fit_mask)
+        rng = np.random.default_rng(stable_seed("fit-subset", data["exposure_id"][index]))
+        keep = rng.choice(candidates, size=min(fit_subset, len(candidates)), replace=False)
+        fit_mask = np.zeros_like(fit_mask)
+        fit_mask[keep] = True
+        context_mask = fit_mask
+
     base = star_rows(data, index, reserved)
     renderers = {
-        "implicit": lambda: implicit_stamps(model, data, index, reserved, zero_color),
+        "implicit": lambda: implicit_stamps(model, data, index, reserved, zero_color, context_mask),
         "piff": lambda: piff_stamps(data, index, fit_mask, reserved, workdir),
         "psfex": lambda: psfex_stamps(data, index, fit_mask, reserved, workdir),
     }
@@ -167,6 +182,12 @@ def parse_args():
         help="query the implicit model with zeroed colors (ablation)",
     )
     parser.add_argument(
+        "--fit-subset",
+        type=int,
+        default=None,
+        help="restrict every method to k randomly chosen fit stars",
+    )
+    parser.add_argument(
         "--methods",
         nargs="+",
         default=["implicit", "piff", "psfex"],
@@ -195,6 +216,7 @@ def eval_file_group(args, file_name, exposures):
                     args.methods,
                     Path(tmp),
                     zero_color=args.zero_color,
+                    fit_subset=args.fit_subset,
                 )
         except Exception:
             n_failed += 1
