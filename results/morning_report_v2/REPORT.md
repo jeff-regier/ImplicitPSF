@@ -59,3 +59,10 @@ see allband/REPORT.md (tables and figures)
 ## Polar vs v4 on real r-band
 
 see rband_polar/REPORT.md (tables and figures)
+
+## All-band color-conditioning test (appended 08:40)
+
+Paired slope difference d(dT/T)/d(color), color minus zero-color, identical stars
+(note: zero-color twin is the v4 architecture at epoch ~27 vs polar at epoch ~30,
+so this mixes architecture and color effects — the clean same-architecture pair
+is queued for today): +0.00762 [+0.00722, +0.00810] n=28358 (1185 exposures)
