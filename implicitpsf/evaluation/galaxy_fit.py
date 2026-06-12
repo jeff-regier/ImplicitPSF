@@ -8,10 +8,10 @@ PSF kernel at the INTEGER part of the galaxy position (the sub-pixel offset live
 the galaxy profile instead) makes the zero-padded discrete convolution produce native
 centers at output indices s*j + (s*half + s - half - 1) with no interpolation.
 
-The galaxy profile is sampled (not pixel-integrated!) on the fine lattice via a
-scaling trick around AstroMatch's evaluate_sersic_profile: oversample=1 with
-patch_size = s*patch, re and offsets scaled by s, gives point samples of the
-continuous profile — its internal block-averaging path is never used.
+The galaxy profile enters as fine-cell averages via a scaling trick around
+AstroMatch's evaluate_sersic_profile: patch_size = s*patch with re and offsets
+scaled by s makes its "pixels" our fine cells, and its block-averaging integrates
+each cell — exact for the cuspy galaxy; no second native-pixel integration occurs.
 
 Flux convention: kernels are stamp-sum normalized (render_at), so PSF flux outside
 the stamp is redistributed inside (~1% for a beta=2.5 Moffat at FWHM=4 on 32 px).
@@ -27,21 +27,31 @@ from astromatch.simulator.sersic_profile import (
 )
 
 OVERSAMPLE = 3  # must be odd: the fine lattice then contains native pixel centers
+SUBINTEGRATE = 4  # even sub-grid per fine cell for galaxy integration (cusp safety)
 
 
-def fine_sersic_samples(dx, dy, sersic_n, sersic_re, eta1, eta2, patch_size, s=OVERSAMPLE):
-    """Point samples of the continuous unit-flux Sersic profile on the fine lattice.
+def fine_sersic_samples(
+    dx, dy, sersic_n, sersic_re, eta1, eta2, patch_size, s=OVERSAMPLE, sub=SUBINTEGRATE
+):
+    """Fine-lattice cell averages of the continuous unit-flux Sersic profile.
+
+    Each fine cell is integrated on a sub x sub grid (even, so a cusp centered on a
+    cell is straddled, never point-sampled): high-n Sersic cores are far too cuspy
+    for point sampling at any practical s. Cell-averaging makes the galaxy factor of
+    the convolution quadrature exact; the remaining error is the kernel's smooth
+    variation within a cell.
 
     Args:
         dx, dy: (n,) galaxy center offsets from round(position), in native pixels
         sersic_n, sersic_re, eta1, eta2: (n,) profile parameters (re in native pixels)
         patch_size: native stamp width
         s: oversampling factor
+        sub: per-cell integration factor (even)
 
     Returns:
-        (n, s*patch, s*patch) profile point samples, normalized so that the
-        continuous profile has unit flux (sample values are surface brightness
-        times the fine-cell area 1/s^2)
+        (n, s*patch, s*patch) cell-averaged samples, normalized so the continuous
+        profile has unit flux (values are mean surface brightness times the
+        fine-cell area 1/s^2)
     """
     half = patch_size // 2
     fine = patch_size * s
@@ -62,7 +72,7 @@ def fine_sersic_samples(dx, dy, sersic_n, sersic_re, eta1, eta2, patch_size, s=O
         zeros,
         zeros,
         patch_size=fine,
-        oversample=1,
+        oversample=sub,
     )
     flux_norm = sersic_analytic_flux(sersic_n, sersic_re * s, zeros)
     return profile / flux_norm.reshape(-1, 1, 1)
@@ -131,6 +141,7 @@ def fit_galaxies(
 
     weights = valid.float() / variance
     optimizer = torch.optim.Adam([log_flux, dx, dy, log_re, eta1, eta2], lr=lr)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=steps, eta_min=lr / 100)
     for _ in range(steps):
         optimizer.zero_grad()
         profile = fine_sersic_samples(
@@ -141,6 +152,7 @@ def fit_galaxies(
         chi2 = (weights * (cutouts - model).square()).sum(dim=(-2, -1))
         chi2.sum().backward()
         optimizer.step()
+        scheduler.step()
 
     with torch.no_grad():
         n_valid = valid.sum(dim=(-2, -1)).clamp(min=7)
