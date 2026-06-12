@@ -50,13 +50,14 @@ def block(title, rows):
     lines.extend(rows)
     lines.append("")
 
-# C2-real paired slopes
-c = pd.read_parquet("results/real_test_implicit_v4_rband.parquet")
-z = pd.read_parquet("results/real_test_implicit_v4_rband_zerocolor.parquet")
+# C2-real paired slopes (corrected, valid-pixel moments)
+c = pd.read_parquet("results/real_test_implicit_real_v4_rband_masked.parquet")
+z = pd.read_parquet("results/real_test_implicit_real_v4_rband_zerocolor_masked.parquet")
 for t in (c, z):
     t["t_frac"] = (t.T_star - t.T_model) / t.T_star
 m = c.merge(z, on=["exposure_id", "star_id"], suffixes=("_c", "_z"))
-m = m[(m.flag_model_c == 0) & (m.flag_model_z == 0) & (m.flag_star_c == 0) & (m.color_c != 0)]
+m = m[(m.flag_model_c == 0) & (m.flag_model_z == 0) & (m.flag_star_c == 0)
+      & (m.color_c != 0) & (m.valid_frac_c >= 0.95)]
 slope = np.polyfit(m.color_c, m.t_frac_c - m.t_frac_z, 1)[0]
 block("C2 on real data (r-band)", [
     f"- paired slope difference (color - zerocolor): **{slope:+.5f}/mag**, CI [+0.0016, +0.0030]",
