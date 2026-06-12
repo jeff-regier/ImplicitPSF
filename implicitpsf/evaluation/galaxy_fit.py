@@ -20,14 +20,44 @@ every PSF arm in the recovery experiment, so comparisons are unaffected.
 """
 
 import torch
-from astromatch.simulator.sersic_profile import (
-    eta1eta2_to_q_pa,
-    evaluate_sersic_profile,
-    sersic_analytic_flux,
-)
+from astromatch.simulator.sersic_profile import sersic_analytic_flux, sersic_bn
 
 OVERSAMPLE = 3  # must be odd: the fine lattice then contains native pixel centers
 SUBINTEGRATE = 4  # even sub-grid per fine cell for galaxy integration (cusp safety)
+
+
+def _sersic_cell_averages(x_pos, y_pos, sersic_n, sersic_re, eta1, eta2, n_cells, sub):
+    """Cell-averaged Sersic intensities with the ellipse as a quadratic form in eta.
+
+    AstroMatch's (q, PA) route computes PA = atan2(eta2, eta1 + eps), whose gradient
+    is eta1 / |eta|^2 — it explodes at the round-galaxy origin where every fit starts,
+    flooding Adam's second-moment buffer and freezing eta2 (eta1's branch is exactly
+    zero there, which is why only eta2 broke). The area-preserving elliptical radius
+    is instead written directly as R^2 = M11 x^2 + 2 M12 x y + M22 y^2 with
+    M = cosh|eta| I - sinh|eta| [[cos2PA, sin2PA], [sin2PA, -cos2PA]] — analytic in
+    (eta1, eta2) everywhere, identical values to the (q, PA) form.
+    """
+    coords = (torch.arange(n_cells * sub, dtype=x_pos.dtype) + 0.5) / sub - 0.5
+    xx = coords.unsqueeze(0) - x_pos[:, None]  # (n, fine*sub)
+    yy = coords.unsqueeze(0) - y_pos[:, None]
+
+    m = torch.sqrt(eta1**2 + eta2**2 + 1e-12)
+    sinch = torch.sinh(m) / m  # m >= 1e-6, and sinch -> 1 smoothly
+    m11 = (torch.cosh(m) - eta1 * sinch)[:, None, None]
+    m22 = (torch.cosh(m) + eta1 * sinch)[:, None, None]
+    m12 = (-eta2 * sinch)[:, None, None]
+
+    x2 = (xx**2).unsqueeze(1)  # (n, 1, fine*sub) — broadcast outer product
+    y2 = (yy**2).unsqueeze(2)
+    xy = yy.unsqueeze(2) * xx.unsqueeze(1)
+    r = torch.sqrt((m11 * x2 + m22 * y2 + 2.0 * m12 * xy).clamp(min=1e-12))
+
+    bn = sersic_bn(sersic_n)[:, None, None]
+    re = sersic_re[:, None, None]
+    n_inv = (1.0 / sersic_n)[:, None, None]
+    profile = torch.exp(-bn * (torch.pow(r.clamp(min=1e-6) / re, n_inv) - 1.0))
+    blocks = profile.reshape(-1, n_cells, sub, n_cells, sub)
+    return blocks.mean(dim=(2, 4))
 
 
 def fine_sersic_samples(
@@ -60,21 +90,8 @@ def fine_sersic_samples(
     x_pos = s * (dx + half) + (s - 1) / 2.0
     y_pos = s * (dy + half) + (s - 1) / 2.0
 
-    axis_ratio, position_angle = eta1eta2_to_q_pa(eta1, eta2)
-    zeros = torch.zeros_like(dx)
-    profile = evaluate_sersic_profile(
-        x_pos,
-        y_pos,
-        sersic_n,
-        sersic_re * s,
-        axis_ratio,
-        position_angle,
-        zeros,
-        zeros,
-        patch_size=fine,
-        oversample=sub,
-    )
-    flux_norm = sersic_analytic_flux(sersic_n, sersic_re * s, zeros)
+    profile = _sersic_cell_averages(x_pos, y_pos, sersic_n, sersic_re * s, eta1, eta2, fine, sub)
+    flux_norm = sersic_analytic_flux(sersic_n, sersic_re * s, torch.zeros_like(dx))
     return profile / flux_norm.reshape(-1, 1, 1)
 
 

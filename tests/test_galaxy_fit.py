@@ -116,6 +116,37 @@ def test_galsim_cross_check_sersic_times_psf():
     assert np.abs(ours - reference).max() < 2e-3 * peak
 
 
+def test_fit_recovers_pure_45_degree_ellipticity():
+    """Regression: the (q, PA) parameterization's atan2 gradient explodes at the
+    round-galaxy initialization, freezing eta2 in Adam (eta1's branch is exactly
+    zero there). The quadratic-form radius must recover a pure-45-degree galaxy."""
+    torch.manual_seed(1)
+    kernel = moffat_epsf_fine(4.0)
+    gal = fine_sersic_samples(
+        torch.tensor([0.1]),
+        torch.tensor([-0.2]),
+        torch.tensor([1.0]),
+        torch.tensor([3.0]),
+        torch.tensor([0.0]),
+        torch.tensor([0.3]),
+        PATCH,
+    )
+    clean = 30000.0 * convolve_with_epsf(gal, kernel.unsqueeze(0), PATCH)
+    noisy = (clean + torch.randn_like(clean)).float()
+    result = fit_galaxies(
+        noisy,
+        torch.ones(1, PATCH, PATCH),
+        torch.ones(1, PATCH, PATCH, dtype=torch.bool),
+        kernel.unsqueeze(0).float(),
+        sersic_n=torch.tensor([1.0]),
+        init_flux=torch.tensor([25000.0]),
+        init_re=torch.tensor([3.0]),
+    )
+    assert abs(result["eta1"][0].item()) < 0.03
+    assert abs(result["eta2"][0].item() - 0.3) < 0.03
+    assert result["chi2"][0].item() < 1.1
+
+
 def test_fit_recovers_injected_galaxy():
     rng = np.random.default_rng(0)
     kernel = moffat_epsf_fine(4.0)
