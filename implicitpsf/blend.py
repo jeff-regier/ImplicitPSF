@@ -150,6 +150,7 @@ def blend_chi2(
     )
 
     is_target = ((star_types == 0) | (star_types == 1)) & (fluxes > 0)
+    is_target &= batch["valid_pixels"].any(dim=-1).any(dim=-1)  # dead-amp/masked stamps
     if galaxy_mode == "exclude":
         is_target &= ~galaxy_near
     if not is_target.any():
@@ -205,12 +206,14 @@ def blend_chi2(
         )
 
     n_valid = weights.gt(0).sum(dim=-1).float()
-    if (n_valid == 0).any():
-        raise ValueError("blend target with no usable pixels")
+    usable = n_valid > 0  # galaxy masking can zero out a target's remaining pixels
+    if not usable.any():
+        raise ValueError("no blend target with usable pixels")
 
     amplitudes = gls_amplitudes(components, observed, weights, comp_mask)
     model_stamps = torch.einsum("nk,nkp->np", amplitudes, components)
-    chi2 = (weights * (observed - model_stamps).square()).sum(dim=-1) / n_valid
+    residual_chi2 = (weights * (observed - model_stamps).square()).sum(dim=-1)
+    chi2 = residual_chi2[usable] / n_valid[usable]
     if chi2_cap is not None:
         chi2 = chi2.clamp(max=chi2_cap)
     return chi2
