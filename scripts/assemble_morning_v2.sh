@@ -1,18 +1,18 @@
 #!/bin/bash
 # Morning report v2: assembles from whatever evals exist at run time.
 # Inputs it looks for (each optional except the r-band block):
-#   results/real_test_implicit_allband.parquet      (all-band implicit eval)
-#   results/real_test_implicit_v5_rband.parquet     (polar r-band eval)
+#   results/real_test_implicit_allband_masked.parquet      (all-band implicit eval)
+#   results/real_test_implicit_real_v5_rband_masked.parquet     (polar r-band eval)
 set -euo pipefail
 cd /home/regier/ImplicitPSF
 OUT=results/morning_report_v2
 mkdir -p $OUT
 
-if [ -f results/real_test_implicit_allband.parquet ]; then
+if [ -f results/real_test_implicit_allband_masked.parquet ]; then
   uv run python -c "
 import pandas as pd
 bl = pd.read_parquet('results/real_test_baselines.parquet')
-imp = pd.read_parquet('results/real_test_implicit_allband.parquet')
+imp = pd.read_parquet('results/real_test_implicit_allband_masked.parquet')
 merged = pd.concat([imp, bl[bl.exposure_id.isin(imp.exposure_id)]], ignore_index=True)
 merged.to_parquet('results/real_allband_merged.parquet')
 print('all-band merged rows:', len(merged))
@@ -22,12 +22,12 @@ print('all-band merged rows:', len(merged))
     --ccd-width 2048 --ccd-height 4096 --out $OUT/allband
 fi
 
-if [ -f results/real_test_implicit_v5_rband.parquet ]; then
+if [ -f results/real_test_implicit_real_v5_rband_masked.parquet ]; then
   uv run python -c "
 import pandas as pd
 bl = pd.read_parquet('results/real_test_baselines.parquet')
 bl = bl[bl.band == 'r']
-imp = pd.read_parquet('results/real_test_implicit_v5_rband.parquet')
+imp = pd.read_parquet('results/real_test_implicit_real_v5_rband_masked.parquet')
 merged = pd.concat([imp, bl[bl.exposure_id.isin(imp.exposure_id)]], ignore_index=True)
 merged.to_parquet('results/real_rband_v5_merged.parquet')
 "
