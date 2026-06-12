@@ -142,7 +142,7 @@ def implicit_kernels(model, data, index, fit_mask, x, y):
     return render_at(model, batch, queries, colors, oversample=OVERSAMPLE).numpy()
 
 
-def evaluate_exposure(model, data, index, reserved_ids, workdir, n_gal):
+def evaluate_exposure(model, data, index, reserved_ids, workdir, n_gal, free_n):
     exposure_id = data["exposure_id"][index]
     clean, reserved = exposure_masks(data, index, reserved_ids)
     fit_mask = clean & ~reserved
@@ -181,10 +181,15 @@ def evaluate_exposure(model, data, index, reserved_ids, workdir, n_gal):
     cutouts = stamps.repeat(rep, 1, 1)
     variance = torch.full_like(cutouts, NOISE_SIGMA**2)
     valid = torch.ones_like(cutouts, dtype=torch.bool)
-    true_n = torch.tensor(np.tile(gals["n"], rep), dtype=torch.float32)
+    if free_n:  # the fitter must not see the true index; init at a neutral value
+        n_arg = torch.full((n_gal * rep,), 1.5)
+    else:
+        n_arg = torch.tensor(np.tile(gals["n"], rep), dtype=torch.float32)
     init_flux = cutouts.sum(dim=(-2, -1)).clamp(min=100.0)
     init_re = torch.full((n_gal * rep,), 3.0)
-    result = fit_galaxies(cutouts, variance, valid, kernels, true_n, init_flux, init_re)
+    result = fit_galaxies(
+        cutouts, variance, valid, kernels, n_arg, init_flux, init_re, fit_n=free_n
+    )
 
     frames = []
     for a, arm in enumerate(arm_names):
@@ -206,6 +211,7 @@ def evaluate_exposure(model, data, index, reserved_ids, workdir, n_gal):
                     "dx_err": result["dx"][sl].numpy() - (x - np.round(x)),
                     "dy_err": result["dy"][sl].numpy() - (y - np.round(y)),
                     "re_fit": result["re"][sl].numpy(),
+                    "n_fit": result["n"][sl].numpy(),
                     "eta1_fit": result["eta1"][sl].numpy(),
                     "eta2_fit": result["eta2"][sl].numpy(),
                     "chi2": result["chi2"][sl].numpy(),
@@ -231,7 +237,13 @@ def eval_file_group(args, file_name, exposures):
             try:
                 frames.append(
                     evaluate_exposure(
-                        model, data, index, reserved_ids, workdir, args.galaxies_per_exposure
+                        model,
+                        data,
+                        index,
+                        reserved_ids,
+                        workdir,
+                        args.galaxies_per_exposure,
+                        args.free_n,
                     )
                 )
             except Exception:
@@ -248,6 +260,9 @@ def main():
     parser.add_argument("--max-exposures", type=int, default=75)
     parser.add_argument("--galaxies-per-exposure", type=int, default=12)
     parser.add_argument("--num-workers", type=int, default=12)
+    parser.add_argument(
+        "--free-n", action="store_true", help="fit the Sersic index instead of fixing to truth"
+    )
     args = parser.parse_args()
 
     manifest = load_manifest(args.manifest)

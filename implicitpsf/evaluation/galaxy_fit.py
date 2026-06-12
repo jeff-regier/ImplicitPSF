@@ -8,10 +8,9 @@ PSF kernel at the INTEGER part of the galaxy position (the sub-pixel offset live
 the galaxy profile instead) makes the zero-padded discrete convolution produce native
 centers at output indices s*j + (s*half + s - half - 1) with no interpolation.
 
-The galaxy profile enters as fine-cell averages via a scaling trick around
-AstroMatch's evaluate_sersic_profile: patch_size = s*patch with re and offsets
-scaled by s makes its "pixels" our fine cells, and its block-averaging integrates
-each cell — exact for the cuspy galaxy; no second native-pixel integration occurs.
+The galaxy profile enters as fine-cell averages from _sersic_cell_averages (sub-grid
+block averaging per fine cell — exact for the cuspy galaxy; no second native-pixel
+integration occurs), with the ellipse written as a smooth quadratic form in eta.
 
 Flux convention: kernels are stamp-sum normalized (render_at), so PSF flux outside
 the stamp is redistributed inside (~1% for a beta=2.5 Moffat at FWHM=4 on 32 px).
@@ -135,18 +134,20 @@ def fit_galaxies(
     patch_size=32,
     steps=300,
     lr=0.03,
+    fit_n=False,
 ):
-    """Batched gradient fit of (flux, dx, dy, re, eta1, eta2) with fixed Sersic n.
+    """Batched gradient fit of (flux, dx, dy, re, eta1, eta2) and optionally Sersic n.
 
     Args:
         cutouts, variance: (n, patch, patch) data and noise
         valid: (n, patch, patch) bool
         kernels_fine: (n, s*patch, s*patch) effective-PSF kernels (integer-position)
-        sersic_n: (n,) fixed Sersic indices
+        sersic_n: (n,) Sersic indices — fixed values, or the init when fit_n is True
         init_flux, init_re: (n,) initial values
+        fit_n: free the Sersic index (clamped to [0.4, 5.5])
 
     Returns:
-        dict of fitted (n,) tensors: flux, dx, dy, re, eta1, eta2, chi2
+        dict of fitted (n,) tensors: flux, dx, dy, re, eta1, eta2, n, chi2
     """
     n_gal = len(cutouts)
     log_flux = torch.log(init_flux.clamp(min=1.0)).clone().requires_grad_(True)
@@ -155,14 +156,22 @@ def fit_galaxies(
     log_re = torch.log(init_re.clamp(min=0.3)).clone().requires_grad_(True)
     eta1 = torch.zeros(n_gal, requires_grad=True)
     eta2 = torch.zeros(n_gal, requires_grad=True)
+    log_n = torch.log(sersic_n).clone().requires_grad_(fit_n)
 
+    params = [log_flux, dx, dy, log_re, eta1, eta2] + ([log_n] if fit_n else [])
     weights = valid.float() / variance
-    optimizer = torch.optim.Adam([log_flux, dx, dy, log_re, eta1, eta2], lr=lr)
+    optimizer = torch.optim.Adam(params, lr=lr)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=steps, eta_min=lr / 100)
     for _ in range(steps):
         optimizer.zero_grad()
         profile = fine_sersic_samples(
-            dx, dy, sersic_n, log_re.exp().clamp(0.3, 20.0), eta1, eta2, patch_size
+            dx,
+            dy,
+            log_n.exp().clamp(0.4, 5.5),
+            log_re.exp().clamp(0.3, 20.0),
+            eta1,
+            eta2,
+            patch_size,
         )
         stamps = convolve_with_epsf(profile, kernels_fine, patch_size)
         model = log_flux.exp().reshape(-1, 1, 1) * stamps
@@ -172,8 +181,9 @@ def fit_galaxies(
         scheduler.step()
 
     with torch.no_grad():
-        n_valid = valid.sum(dim=(-2, -1)).clamp(min=7)
-        final_chi2 = chi2.detach() / (n_valid - 6)
+        n_free = 7 if fit_n else 6
+        n_valid = valid.sum(dim=(-2, -1)).clamp(min=n_free + 1)
+        final_chi2 = chi2.detach() / (n_valid - n_free)
     return {
         "flux": log_flux.exp().detach(),
         "dx": dx.detach(),
@@ -181,5 +191,6 @@ def fit_galaxies(
         "re": log_re.exp().detach(),
         "eta1": eta1.detach(),
         "eta2": eta2.detach(),
+        "n": log_n.exp().clamp(0.4, 5.5).detach(),
         "chi2": final_chi2,
     }
