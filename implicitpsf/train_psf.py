@@ -151,6 +151,13 @@ def parse_args():
     parser.add_argument("--decoder-film", action="store_true")
     parser.add_argument("--diagonal-coords", action="store_true")
     parser.add_argument("--polar-coords", action="store_true")
+    parser.add_argument("--loss-mode", default="single", choices=["single", "blend"])
+    parser.add_argument("--blend-radius", type=float, default=22.0)
+    parser.add_argument("--blend-k-max", type=int, default=4)
+    parser.add_argument(
+        "--galaxy-mode", default="exclude", choices=["exclude", "mask", "component"]
+    )
+    parser.add_argument("--chi2-cap", type=float, default=None)
     parser.add_argument("--context-dropout-max", type=float, default=0.5)
     parser.add_argument("--no-attention", action="store_true")
     parser.add_argument(
@@ -211,6 +218,11 @@ def main():
         decoder_film=args.decoder_film,
         diagonal_coords=args.diagonal_coords,
         polar_coords=args.polar_coords,
+        loss_mode=args.loss_mode,
+        blend_radius=args.blend_radius,
+        blend_k_max=args.blend_k_max,
+        galaxy_mode=args.galaxy_mode,
+        chi2_cap=args.chi2_cap,
     )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)

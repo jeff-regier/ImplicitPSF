@@ -5,6 +5,8 @@ import torch
 from einops import rearrange
 from torch import nn
 
+from implicitpsf.blend import blend_chi2, sample_grid
+
 
 def stamp_offsets(positions, patch_size, oversample=1):
     """Continuous (du, dv) offsets of stamp sample centers from each star's center.
@@ -22,14 +24,7 @@ def stamp_offsets(positions, patch_size, oversample=1):
     Returns:
         offsets: (batch, n_stars, (patch_size * oversample) ** 2, 2) offsets in pixels
     """
-    half = patch_size // 2
-    n_samples = patch_size * oversample
-    step = 1.0 / oversample
-    grid_1d = torch.arange(n_samples, device=positions.device, dtype=positions.dtype)
-    grid_1d = grid_1d * step + (step - 1.0) / 2.0 - half
-    grid_v, grid_u = torch.meshgrid(grid_1d, grid_1d, indexing="ij")
-    grid = torch.stack([grid_u, grid_v], dim=-1).reshape(-1, 2)
-
+    grid = sample_grid(patch_size, oversample, positions.device, positions.dtype)
     subpixel = positions - positions.round()
     return grid - subpixel.unsqueeze(2)
 
@@ -174,6 +169,11 @@ class ImplicitPSF(pl.LightningModule):
         decoder_film=False,
         diagonal_coords=False,
         polar_coords=False,
+        loss_mode="single",
+        blend_radius=22.0,
+        blend_k_max=4,
+        galaxy_mode="exclude",
+        chi2_cap=None,
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -185,6 +185,11 @@ class ImplicitPSF(pl.LightningModule):
         self.use_attention = use_attention
         self.context_dropout_max = context_dropout_max
         self.n_attn_layers = n_attn_layers
+        self.loss_mode = loss_mode
+        self.blend_radius = blend_radius
+        self.blend_k_max = blend_k_max
+        self.galaxy_mode = galaxy_mode
+        self.chi2_cap = chi2_cap
         self.learning_rate = learning_rate
         self.weight_decay = weight_decay
 
@@ -258,7 +263,7 @@ class ImplicitPSF(pl.LightningModule):
             dim=-1,
         )
 
-    def _attend(self, cutouts, positions, colors, fluxes, context_mask):
+    def attend(self, cutouts, positions, colors, fluxes, context_mask):
         """Attention features for every star, attending only to context stars.
 
         Args:
@@ -337,7 +342,7 @@ class ImplicitPSF(pl.LightningModule):
         """
         features = None
         if self.use_attention:
-            features = self._attend(cutouts, positions, colors, fluxes, context_mask)
+            features = self.attend(cutouts, positions, colors, fluxes, context_mask)
 
         offsets = stamp_offsets(positions, self.patch_size, oversample)
         intensities = self.psf_decoder(offsets, features)
@@ -346,11 +351,11 @@ class ImplicitPSF(pl.LightningModule):
         return rearrange(normalized, "b s (h w) -> b s h w", h=side, w=side)
 
     def get_loss(self, batch):
-        """Weighted chi-square loss over clean stars, amplitude fit per star.
+        """Weighted chi-square loss; dispatches on loss_mode.
 
-        Batch keys: cutouts, variance, valid_pixels, flux, positions, colors, star_types.
-        Cutouts are background-subtracted; the per-star amplitude is solved in closed
-        form by weighted least squares, so the loss measures shape, not flux calibration.
+        "single": clean isolated stars only, scalar amplitude per star (original).
+        "blend": targets include blended stars; each cutout is a GLS-amplitude sum of
+        the target plus detected star neighbors (see blend.py).
         """
         cutouts = batch["cutouts"]
         fluxes = batch["flux"]
@@ -361,6 +366,18 @@ class ImplicitPSF(pl.LightningModule):
             keep_frac = 1.0 - torch.rand(1, device=cutouts.device) * self.context_dropout_max
             kept = torch.rand_like(fluxes) < keep_frac
             context_mask = context_mask & kept
+
+        if self.loss_mode == "blend":
+            chi2 = blend_chi2(
+                self,
+                batch,
+                context_mask,
+                self.blend_radius,
+                self.blend_k_max,
+                self.galaxy_mode,
+                self.chi2_cap,
+            )
+            return chi2.mean()
 
         clean_mask = (star_types == 0) & (fluxes > 0)
         if not clean_mask.any():
