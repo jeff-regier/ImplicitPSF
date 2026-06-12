@@ -25,14 +25,23 @@ def test_neighbor_table_geometry_and_types():
     fluxes = torch.tensor([[100.0, 50.0, 200.0, 10.0]])
     types = torch.tensor([[0, 1, 2, 5]], dtype=torch.uint8)  # star, star, GALAXY, saturated
 
-    idx, mask, galaxy_near = neighbor_table(positions, fluxes, types, radius=22.0, k_max=4)
+    idx, mask, is_gal, galaxy_near = neighbor_table(positions, fluxes, types, radius=22.0, k_max=4)
     # target 0: neighbors within Chebyshev 22 are slots 1 (star) and 3 (saturated);
     # slot 2 is a galaxy (excluded from point components but flags galaxy_near)
     neighbors_0 = set(idx[0, 0][mask[0, 0]].tolist())
     assert neighbors_0 == {1, 3}
+    assert not is_gal[0, 0].any()
     assert bool(galaxy_near[0, 0])
     # brightest first
     assert idx[0, 0, 0].item() == 1
+
+    # with include_galaxies the (bright) galaxy joins, flagged, still brightest-first
+    idx_g, mask_g, is_gal_g, _ = neighbor_table(
+        positions, fluxes, types, radius=22.0, k_max=4, include_galaxies=True
+    )
+    neighbors_g = idx_g[0, 0][mask_g[0, 0]].tolist()
+    assert neighbors_g == [2, 1, 3]
+    assert is_gal_g[0, 0].tolist() == [True, False, False]
 
 
 def test_gls_recovers_exact_amplitudes_noiseless():
@@ -143,7 +152,7 @@ def test_blend_loss_runs_with_neighbors_and_galaxy_modes(blend_batch):
     blend_batch["positions"][0, :, 1] = torch.tensor([100.7, 106.0, 98.0, 300.0, 305.0, 480.0])
     blend_batch["star_types"][0, 4] = 2  # galaxy near slot 3
 
-    for mode in ["exclude", "mask"]:
+    for mode in ["exclude", "mask", "component"]:
         torch.manual_seed(0)
         model = ImplicitPSF(
             patch_size=PATCH,

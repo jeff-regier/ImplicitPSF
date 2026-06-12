@@ -44,7 +44,7 @@ def validate_exposure(data, index, radius, k_max):
     types = data["star_type"][index].unsqueeze(0)
     field = {"chromatic": False, **data["true_field"][index]}
 
-    idx, mask, _ = neighbor_table(pos, fluxes, types, radius=radius, k_max=k_max)
+    idx, mask, _, _ = neighbor_table(pos, fluxes, types, radius=radius, k_max=k_max)
     is_target = (types[0] == 0) & (fluxes[0] > 0)
     targets = torch.nonzero(is_target, as_tuple=True)[0]
 

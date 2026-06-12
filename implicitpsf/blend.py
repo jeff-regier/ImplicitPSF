@@ -31,6 +31,8 @@ def sample_grid(patch_size, oversample, device, dtype):
 STAR_TYPES_POINT = (0, 1, 5)  # clean, star-context, saturated: all genuine point sources
 STAR_TYPES_GALAXY = (2, 3)  # galaxy, unmatched: misspecification risk
 GALAXY_MASK_RADIUS = 6.0  # pixels zeroed around a galaxy detection in 'mask' mode
+GALAXY_COMPONENT_RE = 2.5  # pixels; the crude round-exponential galaxy model's radius
+SERSIC_B1 = 1.67834699  # exact b_n for n=1
 
 
 def chebyshev_distances(positions):
@@ -39,12 +41,17 @@ def chebyshev_distances(positions):
     return diff.abs().amax(dim=-1)
 
 
-def neighbor_table(positions, fluxes, star_types, radius=22.0, k_max=4):
-    """Per star, the indices of its brightest point-source neighbors within radius.
+def neighbor_table(positions, fluxes, star_types, radius=22.0, k_max=4, include_galaxies=False):
+    """Per star, the indices of its brightest detected neighbors within radius.
+
+    Args:
+        include_galaxies: admit galaxy/unmatched detections as components (brightest-
+            first alongside stars) instead of only flagging them
 
     Returns:
         idx: (b, s, k_max - 1) neighbor slot indices (0 where masked)
         mask: (b, s, k_max - 1) bool, True = real neighbor
+        is_gal: (b, s, k_max - 1) bool, True where the neighbor is a galaxy/unmatched
         galaxy_near: (b, s) bool, True if a galaxy/unmatched detection is within radius
     """
     cheb = chebyshev_distances(positions)
@@ -60,15 +67,17 @@ def neighbor_table(positions, fluxes, star_types, radius=22.0, k_max=4):
     n_stars = positions.shape[1]
     eye = torch.eye(n_stars, device=positions.device, dtype=torch.bool)
     near = (cheb < radius) & ~eye
-    eligible = near & is_point.unsqueeze(1)
+    component_ok = is_point | is_galaxy if include_galaxies else is_point
+    eligible = near & component_ok.unsqueeze(1)
 
     score = torch.where(eligible, fluxes.unsqueeze(1).expand_as(eligible), -torch.inf)
     top = score.topk(k_max - 1, dim=-1)
     mask = torch.isfinite(top.values)
     idx = torch.where(mask, top.indices, torch.zeros_like(top.indices))
+    is_gal = is_galaxy.unsqueeze(1).expand(-1, n_stars, -1).gather(2, idx) & mask
 
     galaxy_near = (near & is_galaxy.unsqueeze(1)).any(dim=-1)
-    return idx, mask, galaxy_near
+    return idx, mask, is_gal, galaxy_near
 
 
 def component_offsets(positions, batch_idx, target_idx, comp_idx, grid):
@@ -115,8 +124,9 @@ def blend_chi2(model, batch, context_mask, radius, k_max, galaxy_mode, chi2_cap=
     """Per-target reduced chi-square under the multi-component blend model.
 
     galaxy_mode: 'exclude' drops targets with a galaxy detection within radius;
-    'mask' keeps them but zeroes weights near the galaxy; 'component' additionally
-    models the galaxy with a crude profile (requires galaxy component machinery).
+    'mask' keeps them but zeroes weights near the galaxy; 'component' admits galaxy
+    detections as GLS components, modeled crudely as the decoded PSF convolved with
+    a fixed round exponential (linear amplitude, so the solve is unchanged).
     """
     positions = batch["positions"]
     fluxes = batch["flux"]
@@ -129,7 +139,9 @@ def blend_chi2(model, batch, context_mask, radius, k_max, galaxy_mode, chi2_cap=
         else None
     )
 
-    idx, mask, galaxy_near = neighbor_table(positions, fluxes, star_types, radius, k_max)
+    idx, mask, neighbor_is_gal, galaxy_near = neighbor_table(
+        positions, fluxes, star_types, radius, k_max, include_galaxies=galaxy_mode == "component"
+    )
 
     is_target = ((star_types == 0) | (star_types == 1)) & (fluxes > 0)
     if galaxy_mode == "exclude":
@@ -165,6 +177,16 @@ def blend_chi2(model, batch, context_mask, radius, k_max, galaxy_mode, chi2_cap=
     components = intensities.reshape(n_targets, k_eff, -1)
     components = components / components.sum(dim=-1, keepdim=True).clamp(min=1e-8)
 
+    if galaxy_mode == "component":
+        is_gal_comp = torch.cat(
+            [
+                torch.zeros(n_targets, 1, dtype=torch.bool, device=positions.device),
+                neighbor_is_gal[batch_idx, target_idx],
+            ],
+            dim=1,
+        )
+        components = _spread_galaxy_components(components, is_gal_comp, patch)
+
     observed = batch["cutouts"][batch_idx, target_idx].reshape(n_targets, -1)
     variance = batch["variance"][batch_idx, target_idx].reshape(n_targets, -1)
     valid = batch["valid_pixels"][batch_idx, target_idx].reshape(n_targets, -1)
@@ -185,6 +207,38 @@ def blend_chi2(model, batch, context_mask, radius, k_max, galaxy_mode, chi2_cap=
     if chi2_cap is not None:
         chi2 = chi2.clamp(max=chi2_cap)
     return chi2
+
+
+def _spread_galaxy_components(components, is_gal_comp, patch):
+    """Convolve galaxy components' decoded PSF stamps with a fixed round exponential.
+
+    The exponential (n=1 Sersic, re=GALAXY_COMPONENT_RE) is deliberately crude: the
+    GLS amplitude absorbs total flux, and the convolution only needs to spread the
+    light enough that the galaxy stops biasing its neighbors' point-source fits.
+    """
+    flat_gal = is_gal_comp.reshape(-1)
+    if not flat_gal.any():
+        return components
+
+    half = patch // 2
+    grid = sample_grid(patch, 1, components.device, components.dtype)
+    radii = grid.norm(dim=-1)
+    kernel = torch.exp(-SERSIC_B1 * radii / GALAXY_COMPONENT_RE).reshape(patch, patch)
+    kernel = kernel / kernel.sum()
+
+    stamps = components.reshape(-1, patch, patch)[flat_gal]
+    full = 2 * patch - 1
+    conv = torch.fft.irfft2(
+        torch.fft.rfft2(stamps, s=(full, full)) * torch.fft.rfft2(kernel, s=(full, full)),
+        s=(full, full),
+    )
+    # kernel center sits at grid index (half, half): aligned crop starts there
+    spread = conv[:, half : half + patch, half : half + patch]
+    spread = spread / spread.sum(dim=(-2, -1), keepdim=True).clamp(min=1e-8)
+
+    out = components.reshape(-1, patch, patch).clone()
+    out[flat_gal] = spread
+    return out.reshape(components.shape)
 
 
 def _galaxy_pixel_mask(positions, star_types, fluxes, batch_idx, target_idx, grid, radius):
