@@ -12,7 +12,7 @@ import piff
 PIXEL_SCALE = 0.263
 
 
-def fit_piff(fits_path, cat_path, out_path, order=2, stamp_size=25):
+def fit_piff(fits_path, cat_path, out_path, order=2, stamp_size=25, grid_size=17):
     """Fit a PIFF model; returns the fitted piff.PSF (also written to out_path)."""
     config = {
         "input": {
@@ -27,7 +27,7 @@ def fit_piff(fits_path, cat_path, out_path, order=2, stamp_size=25):
             "stamp_size": stamp_size,
         },
         "psf": {
-            "model": {"type": "PixelGrid", "scale": PIXEL_SCALE, "size": 17},
+            "model": {"type": "PixelGrid", "scale": PIXEL_SCALE, "size": grid_size},
             "interp": {"type": "BasisPolynomial", "order": order},
             "outliers": {"type": "Chisq", "nsigma": 4.0, "max_remove": 0.05},
         },

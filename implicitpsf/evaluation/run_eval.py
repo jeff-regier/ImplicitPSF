@@ -90,7 +90,8 @@ def implicit_stamps(model, data, index, reserved_mask, zero_color=False, context
 def star_rows(data, index, reserved_mask):
     """Per-reserved-star metadata and data-stamp moments shared by all methods."""
     stamps = data["cutouts"][index].numpy()[reserved_mask]
-    moments = hsm_moments(stamps)
+    valid = data["valid_pixels"][index].numpy()[reserved_mask]
+    moments = hsm_moments(stamps, valid_pixels=valid)
     return pd.DataFrame(
         {
             "exposure_id": data["exposure_id"][index],
@@ -108,16 +109,21 @@ def star_rows(data, index, reserved_mask):
             "cx_star": moments["centroid_x"],
             "cy_star": moments["centroid_y"],
             "flag_star": moments["flag"],
+            "valid_frac": valid.reshape(len(stamps), -1).mean(axis=1),
         }
     )
 
 
 def method_columns(model_stamps, data, index, reserved_mask):
-    """Model moments and chi^2 against the reserved data stamps."""
+    """Model moments and chi^2 against the reserved data stamps.
+
+    Model moments use the star's valid-pixel mask so both sides of every
+    star-minus-model difference are measured over identical pixels.
+    """
     observed = data["cutouts"][index].numpy()[reserved_mask]
     variance = data["variance"][index].numpy()[reserved_mask]
     valid = data["valid_pixels"][index].numpy()[reserved_mask]
-    moments = hsm_moments(model_stamps)
+    moments = hsm_moments(model_stamps, valid_pixels=valid)
     fit = reduced_chi2(observed, model_stamps, variance, valid)
     return {
         "T_model": moments["T"],

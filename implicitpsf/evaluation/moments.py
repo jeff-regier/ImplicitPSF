@@ -13,12 +13,15 @@ PIXEL_SCALE = 0.263  # arcsec per DECam pixel
 MOMENT_FIELDS = ("T", "e1", "e2", "centroid_x", "centroid_y", "flag")
 
 
-def hsm_moments(stamps, pixel_scale=PIXEL_SCALE):
+def hsm_moments(stamps, pixel_scale=PIXEL_SCALE, valid_pixels=None):
     """Adaptive moments for a stack of stamps.
 
     Args:
         stamps: (n, k, k) array of star or model images
         pixel_scale: arcsec per pixel
+        valid_pixels: optional (n, k, k) bool; False pixels (masked regions, e.g.
+            the dead amplifier) are excluded from the fit — measuring raw stamps
+            that contain masked garbage produces wildly corrupted shapes
 
     Returns:
         dict of (n,) arrays: T (arcsec^2), e1, e2 (distortion), centroid_x,
@@ -30,7 +33,11 @@ def hsm_moments(stamps, pixel_scale=PIXEL_SCALE):
 
     for index, stamp in enumerate(stamps):
         image = galsim.Image(np.ascontiguousarray(stamp), scale=pixel_scale)
-        shape_data = galsim.hsm.FindAdaptiveMom(image, strict=False)
+        badpix = None
+        if valid_pixels is not None:
+            bad = np.ascontiguousarray((~valid_pixels[index]).astype(np.int32))
+            badpix = galsim.Image(bad, scale=pixel_scale)
+        shape_data = galsim.hsm.FindAdaptiveMom(image, badpix=badpix, strict=False)
         if shape_data.error_message != "":
             results["flag"][index] = 1
             continue
