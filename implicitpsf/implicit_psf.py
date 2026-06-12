@@ -174,6 +174,7 @@ class ImplicitPSF(pl.LightningModule):
         blend_k_max=4,
         galaxy_mode="exclude",
         chi2_cap=None,
+        blend_max_targets=None,
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -190,6 +191,7 @@ class ImplicitPSF(pl.LightningModule):
         self.blend_k_max = blend_k_max
         self.galaxy_mode = galaxy_mode
         self.chi2_cap = chi2_cap
+        self.blend_max_targets = blend_max_targets
         self.learning_rate = learning_rate
         self.weight_decay = weight_decay
 
@@ -376,6 +378,7 @@ class ImplicitPSF(pl.LightningModule):
                 self.blend_k_max,
                 self.galaxy_mode,
                 self.chi2_cap,
+                self.blend_max_targets,
             )
             return chi2.mean()
 

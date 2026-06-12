@@ -120,13 +120,19 @@ def gls_amplitudes(components, observed, weights, comp_mask, ridge=1e-4):
     return torch.linalg.solve(normal + regular, rhs)
 
 
-def blend_chi2(model, batch, context_mask, radius, k_max, galaxy_mode, chi2_cap=None):
+def blend_chi2(
+    model, batch, context_mask, radius, k_max, galaxy_mode, chi2_cap=None, max_targets=None
+):
     """Per-target reduced chi-square under the multi-component blend model.
 
     galaxy_mode: 'exclude' drops targets with a galaxy detection within radius;
     'mask' keeps them but zeroes weights near the galaxy; 'component' admits galaxy
     detections as GLS components, modeled crudely as the decoded PSF convolved with
     a fixed round exponential (linear amplitude, so the solve is unchanged).
+
+    max_targets caps how many targets are scored per call (memory: each target
+    decodes k_max stamps). Training draws a fresh random subset each step — an
+    unbiased estimate of the per-target mean; eval subsets are deterministic.
     """
     positions = batch["positions"]
     fluxes = batch["flux"]
@@ -150,6 +156,7 @@ def blend_chi2(model, batch, context_mask, radius, k_max, galaxy_mode, chi2_cap=
         raise ValueError("no blend targets in batch")
 
     batch_idx, target_idx = torch.nonzero(is_target, as_tuple=True)
+    batch_idx, target_idx = _subsample_targets(batch_idx, target_idx, max_targets, model.training)
     n_targets = len(batch_idx)
     comp_idx = torch.cat(
         [target_idx.unsqueeze(1), idx[batch_idx, target_idx]], dim=1
@@ -207,6 +214,20 @@ def blend_chi2(model, batch, context_mask, radius, k_max, galaxy_mode, chi2_cap=
     if chi2_cap is not None:
         chi2 = chi2.clamp(max=chi2_cap)
     return chi2
+
+
+def _subsample_targets(batch_idx, target_idx, max_targets, training):
+    """Cap scored targets: fresh random subsets while training (unbiased estimate of
+    the per-target mean), deterministic subsets in eval (comparable val curves)."""
+    if max_targets is None or len(batch_idx) <= max_targets:
+        return batch_idx, target_idx
+    generator = None
+    if not training:
+        generator = torch.Generator(device=batch_idx.device)
+        generator.manual_seed(len(batch_idx))
+    keep = torch.randperm(len(batch_idx), device=batch_idx.device, generator=generator)
+    keep = keep[:max_targets]
+    return batch_idx[keep], target_idx[keep]
 
 
 def _spread_galaxy_components(components, is_gal_comp, patch):

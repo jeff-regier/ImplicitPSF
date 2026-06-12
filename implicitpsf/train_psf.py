@@ -158,6 +158,12 @@ def parse_args():
         "--galaxy-mode", default="exclude", choices=["exclude", "mask", "component"]
     )
     parser.add_argument("--chi2-cap", type=float, default=None)
+    parser.add_argument(
+        "--blend-max-targets",
+        type=int,
+        default=None,
+        help="cap scored targets per step (memory); random subsets are unbiased",
+    )
     parser.add_argument("--context-dropout-max", type=float, default=0.5)
     parser.add_argument("--no-attention", action="store_true")
     parser.add_argument(
@@ -223,6 +229,7 @@ def main():
         blend_k_max=args.blend_k_max,
         galaxy_mode=args.galaxy_mode,
         chi2_cap=args.chi2_cap,
+        blend_max_targets=args.blend_max_targets,
     )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
