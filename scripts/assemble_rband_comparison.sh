@@ -9,8 +9,10 @@ import pandas as pd
 baselines = pd.read_parquet('results/real_test_baselines.parquet')
 rband = baselines[baselines.band == 'r']
 print('r-band baseline rows:', len(rband), 'exposures:', rband.exposure_id.nunique())
+checkpoints = {'v4': 'real_v4_rband', 'v1': 'real_rband'}
 for arch in ['v4', 'v1']:
-    implicit = pd.read_parquet(f'results/real_test_implicit_{arch}_rband.parquet')
+    implicit = pd.read_parquet(
+        f'results/real_test_implicit_{checkpoints[arch]}_masked.parquet')
     merged = pd.concat([implicit, rband[rband.exposure_id.isin(implicit.exposure_id)]],
                        ignore_index=True)
     merged.to_parquet(f'results/real_rband_{arch}_merged.parquet')
