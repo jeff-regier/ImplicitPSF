@@ -2,11 +2,16 @@
 
 A query is a "virtual star": appended to the exposure's star list with an empty
 cutout, excluded from the attention keys (context_mask False), but still a query.
-Returned kernels are the effective PSF (pixel response included, since training
-targets are pixelated stars) on a grid `oversample` times finer than native pixels,
-normalized to unit flux at native resolution. To use with galaxy fitting: render the
-galaxy profile at the same oversampling, FFT-convolve, then subsample at native pixel
-centers without further pixel integration (galsim's no_pixel convention).
+What the model returns is the PIXEL-CONVOLVED PSF (the "effective PSF"): each value
+is the expected flux of a 1-pixel-square region centered at the sample point, because
+that is what the training targets are. `oversample` evaluates that same function on a
+finer grid of offsets — it does NOT undo the one-pixel blur; no sample represents the
+unconvolved PSF. This is exactly what galaxy fitting needs: a pixel of a galaxy image
+is (galaxy * PSF * pixel) = (galaxy * effectivePSF) at the pixel center, so render
+the galaxy profile at the same fine sampling, FFT-convolve with these kernels, and
+read off native pixel centers WITHOUT a second pixel integration (galsim's no_pixel
+convention). If the unconvolved PSF is ever required (deconvolution, undersampled
+imagers), the extension is to move the pixel integration inside the training loss.
 """
 
 import torch
