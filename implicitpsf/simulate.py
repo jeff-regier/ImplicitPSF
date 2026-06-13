@@ -36,6 +36,10 @@ COLOR_MEAN, COLOR_SCATTER = 1.0, 0.6  # g-i distribution of simulated stars
 CHROMATIC_FWHM_SLOPE = -0.03  # fractional FWHM change per mag of g-i (DCR/seeing-like)
 ISOLATION_RADIUS = 16.0  # match the real extraction: blended stars are context-only
 ISOLATION_FLUX_RATIO = 0.1
+GALAXY_RE_RANGE = (1.5, 6.0)  # pixels, half-light radius of injected galaxy detections
+GALAXY_SERSIC_RANGE = (0.5, 4.0)
+GALAXY_SHEAR_MAX = 0.5  # max |reduced shear| of an injected galaxy
+TYPE_CLEAN, TYPE_STAR_CONTEXT, TYPE_GALAXY = 0, 1, 2
 
 
 def random_poly2(rng, scale):
@@ -101,6 +105,46 @@ def render_star(image, field, x, y, flux, color):
     image[bounds] += stamp[bounds]
 
 
+def render_galaxy(image, field, x, y, flux, color, re_pix, sersic_n, g1_gal, g2_gal):
+    """Render a Sersic galaxy convolved with the local Moffat PSF into the image.
+
+    Galaxies are extended detections (star_type=2): the blend likelihood models them as
+    misspecified point sources, so they let the galaxy-handling modes (exclude/mask/
+    component) be selected on simulations where the star truth is known exactly.
+    """
+    fwhm, g1_psf, g2_psf = true_psf_params(field, x, y, color)
+    psf = galsim.Moffat(beta=MOFFAT_BETA, fwhm=fwhm * PIXEL_SCALE).shear(g1=g1_psf, g2=g2_psf)
+    galaxy = galsim.Sersic(n=sersic_n, half_light_radius=re_pix * PIXEL_SCALE, flux=flux)
+    galaxy = galaxy.shear(g1=g1_gal, g2=g2_gal)
+    profile = galsim.Convolve([galaxy, psf])
+    stamp = profile.drawImage(
+        nx=PATCH * 2,
+        ny=PATCH * 2,
+        scale=PIXEL_SCALE,
+        center=galsim.PositionD(x + 1.0, y + 1.0),  # galsim is 1-based
+    )
+    bounds = stamp.bounds & image.bounds
+    image[bounds] += stamp[bounds]
+
+
+def sample_galaxies(rng, n_galaxies):
+    """Galaxy detection properties: position, flux, color, size, Sersic index, shape."""
+    half = PATCH // 2
+    margin = half + 2
+    shear_g = rng.uniform(0.0, GALAXY_SHEAR_MAX, n_galaxies)
+    shear_phi = rng.uniform(0.0, np.pi, n_galaxies)
+    return {
+        "x": rng.uniform(margin, WIDTH - margin, n_galaxies),
+        "y": rng.uniform(margin, HEIGHT - margin, n_galaxies),
+        "flux": np.exp(rng.uniform(np.log(FLUX_RANGE[0]), np.log(FLUX_RANGE[1]), n_galaxies)),
+        "color": np.clip(rng.normal(COLOR_MEAN, COLOR_SCATTER, n_galaxies), -0.5, 3.0),
+        "re_pix": rng.uniform(*GALAXY_RE_RANGE, n_galaxies),
+        "sersic_n": rng.uniform(*GALAXY_SERSIC_RANGE, n_galaxies),
+        "g1": shear_g * np.cos(2.0 * shear_phi),
+        "g2": shear_g * np.sin(2.0 * shear_phi),
+    }
+
+
 def wcs_header(exposure_seed):
     header = fits.Header()
     header["CTYPE1"], header["CTYPE2"] = "RA---TAN", "DEC--TAN"
@@ -114,11 +158,17 @@ def wcs_header(exposure_seed):
     return header
 
 
-def simulate_exposure(exposure_seed, fits_dir, chromatic=False):
-    """Render one exposure; returns the v2-schema per-exposure record."""
+def simulate_exposure(exposure_seed, fits_dir, chromatic=False, galaxy_fraction=0.0):
+    """Render one exposure; returns the v2-schema per-exposure record.
+
+    galaxy_fraction injects that many galaxy detections per star (star_type=2); they
+    render into the image (contaminating nearby star cutouts) and carry their own
+    cutouts so the blend likelihood's galaxy modes can be selected on simulations.
+    """
     rng = np.random.default_rng(exposure_seed)
     field = sample_field(rng, chromatic=chromatic)
     n_stars = rng.integers(*N_STARS_RANGE)
+    n_galaxies = round(galaxy_fraction * float(n_stars))
 
     half = PATCH // 2
     margin = half + 2
@@ -130,7 +180,28 @@ def simulate_exposure(exposure_seed, fits_dir, chromatic=False):
     image = galsim.Image(WIDTH, HEIGHT, scale=PIXEL_SCALE, dtype=np.float32)
     for x0, y0, flux0, color0 in zip(x, y, flux, color, strict=True):
         render_star(image, field, x0, y0, flux0, color0)
+
+    gal = sample_galaxies(rng, n_galaxies)
+    gal_cols = zip(
+        gal["x"],
+        gal["y"],
+        gal["flux"],
+        gal["color"],
+        gal["re_pix"],
+        gal["sersic_n"],
+        gal["g1"],
+        gal["g2"],
+        strict=True,
+    )
+    for gx, gy, gf, gc, gre, gn, gg1, gg2 in gal_cols:
+        render_galaxy(image, field, gx, gy, gf, gc, gre, gn, gg1, gg2)
     sci = image.array + rng.normal(0, NOISE_SIGMA, image.array.shape).astype(np.float32)
+
+    n_det = n_stars + n_galaxies
+    x = np.concatenate([x, gal["x"]])
+    y = np.concatenate([y, gal["y"]])
+    flux = np.concatenate([flux, gal["flux"]])
+    color = np.concatenate([color, gal["color"]])
 
     header = wcs_header(exposure_seed)
     header["FWHM"] = field["fwhm_base"]
@@ -160,18 +231,24 @@ def simulate_exposure(exposure_seed, fits_dir, chromatic=False):
     cols = np.round(x).astype(int) - half
     cutouts = windows[rows, cols].astype(np.float32)
 
-    # blended stars poison a single-star likelihood: like the real extraction,
-    # only isolated stars are clean (type 0); the rest are context-only (type 1)
-    tree = cKDTree(np.column_stack([x, y]))
+    # blended stars poison a single-star likelihood: like the real extraction, isolated
+    # stars are clean (0), blended stars are context-only (1), galaxies are 2. Isolation
+    # is computed over stars only — galaxy contamination is handled by the blend
+    # likelihood's galaxy_mode, not by relabeling the star.
+    star_flux = flux[:n_stars]
+    tree = cKDTree(np.column_stack([x[:n_stars], y[:n_stars]]))
     pairs = tree.query_pairs(ISOLATION_RADIUS, output_type="ndarray")
     isolated = np.ones(n_stars, dtype=bool)
     if len(pairs) > 0:
         first, second = pairs[:, 0], pairs[:, 1]
-        np.logical_and.at(isolated, first, ~(flux[second] > ISOLATION_FLUX_RATIO * flux[first]))
-        np.logical_and.at(isolated, second, ~(flux[first] > ISOLATION_FLUX_RATIO * flux[second]))
-    star_type = np.where(isolated, 0, 1).astype(np.uint8)
+        keep_first = ~(star_flux[second] > ISOLATION_FLUX_RATIO * star_flux[first])
+        keep_second = ~(star_flux[first] > ISOLATION_FLUX_RATIO * star_flux[second])
+        np.logical_and.at(isolated, first, keep_first)
+        np.logical_and.at(isolated, second, keep_second)
+    star_type = np.full(n_det, TYPE_GALAXY, dtype=np.uint8)
+    star_type[:n_stars] = np.where(isolated, TYPE_CLEAN, TYPE_STAR_CONTEXT)
 
-    n_slots = n_stars  # variable star counts; padding handled by fixed-slot packing
+    n_slots = n_det  # stars + galaxies; padding handled by fixed-slot packing
     true_fwhm, true_g1, true_g2 = true_psf_params(field, x, y, color)
     return {
         "n_stars": int(n_slots),
@@ -179,14 +256,14 @@ def simulate_exposure(exposure_seed, fits_dir, chromatic=False):
         "variance": np.full(cutouts.shape, NOISE_SIGMA**2, dtype=np.float32),
         "valid_pixels": np.ones(cutouts.shape, dtype=bool),
         "flux": flux.astype(np.float32),
-        "flux_err": np.full(n_stars, NOISE_SIGMA * PATCH, dtype=np.float32),
+        "flux_err": np.full(n_det, NOISE_SIGMA * PATCH, dtype=np.float32),
         "snr": (flux / (NOISE_SIGMA * PATCH)).astype(np.float32),
-        "sky": np.zeros(n_stars, dtype=np.float32),
+        "sky": np.zeros(n_det, dtype=np.float32),
         "x_pixel": x.astype(np.float32),
         "y_pixel": y.astype(np.float32),
         "color": color.astype(np.float32),
         "star_type": star_type,
-        "star_id": exposure_seed * 100_000 + np.arange(n_stars, dtype=np.int64),
+        "star_id": exposure_seed * 100_000 + np.arange(n_det, dtype=np.int64),
         "true_fwhm": true_fwhm.astype(np.float32),
         "true_g1": true_g1.astype(np.float32),
         "true_g2": true_g2.astype(np.float32),
@@ -260,19 +337,27 @@ def pack_records(records, n_slots):
     return data
 
 
-def worker(worker_id, seeds, out_dir, fits_dir, exposures_per_file, chromatic):
+def save_chunk(records, out_dir, worker_id, n_chunks):
+    """Pack a chunk into fixed slots sized to its largest exposure (stars + galaxies)."""
+    n_slots = max(record["n_stars"] for record in records)
+    out_path = Path(out_dir) / f"desstars_sim_w{worker_id:02d}_{n_chunks:04d}.pt"
+    torch.save(pack_records(records, n_slots), out_path)
+    print(f"[worker {worker_id}] wrote {out_path}")
+
+
+def worker(worker_id, seeds, out_dir, fits_dir, exposures_per_file, chromatic, galaxy_fraction):
     records = []
     n_chunks = 0
     for seed in seeds:
-        records.append(simulate_exposure(seed, fits_dir, chromatic=chromatic))
+        record = simulate_exposure(
+            seed, fits_dir, chromatic=chromatic, galaxy_fraction=galaxy_fraction
+        )
+        records.append(record)
         if len(records) == exposures_per_file:
-            out_path = Path(out_dir) / f"desstars_sim_w{worker_id:02d}_{n_chunks:04d}.pt"
-            torch.save(pack_records(records, max(N_STARS_RANGE)), out_path)
-            print(f"[worker {worker_id}] wrote {out_path}")
+            save_chunk(records, out_dir, worker_id, n_chunks)
             records, n_chunks = [], n_chunks + 1
     if records:
-        out_path = Path(out_dir) / f"desstars_sim_w{worker_id:02d}_{n_chunks:04d}.pt"
-        torch.save(pack_records(records, max(N_STARS_RANGE)), out_path)
+        save_chunk(records, out_dir, worker_id, n_chunks)
 
 
 def main():
@@ -285,6 +370,12 @@ def main():
     parser.add_argument(
         "--chromatic", action="store_true", help="PSF FWHM depends on star color (DCR-like)"
     )
+    parser.add_argument(
+        "--galaxy-fraction",
+        type=float,
+        default=0.0,
+        help="inject this many galaxy detections (star_type=2) per star",
+    )
     args = parser.parse_args()
 
     Path(args.out_dir).mkdir(parents=True, exist_ok=True)
@@ -295,7 +386,15 @@ def main():
     processes = [
         mp.Process(
             target=worker,
-            args=(i, chunk, args.out_dir, args.fits_dir, args.exposures_per_file, args.chromatic),
+            args=(
+                i,
+                chunk,
+                args.out_dir,
+                args.fits_dir,
+                args.exposures_per_file,
+                args.chromatic,
+                args.galaxy_fraction,
+            ),
         )
         for i, chunk in enumerate(chunks)
     ]
