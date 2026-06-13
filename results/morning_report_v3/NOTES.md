@@ -21,7 +21,9 @@
 ## Real r-band galaxy-variant trainings (40 ep, batch 2, chi2 cap 50, max targets 96)
 - exclude: best val 3.8174; reserved-star eval: T scatter 0.0334, de 0.0403, chi2 1.073
 - mask:    best val 3.8562; eval: T scatter 0.0336, de 0.0420, chi2 1.075
-- component: best val 3.8488; eval running (results/real_test_implicit_blend_component.parquet)
+- component: best val 3.8488; eval: T scatter 0.0346, de 0.0403, chi2 1.075
+- Verdict: the three variants are within noise of each other on reserved stars;
+  exclude nominally best (smallest T scatter, smallest e1 bias of the trio).
 - single-loss reference (real_v5_rband): T scatter 0.0351, de 0.0366, chi2 1.068
 - Caveat (pre-registered): reserved stars have a contamination floor; sim Gate 2 is the instrument.
 - Pattern: blend variants slightly better size scatter, slightly worse de, small negative
