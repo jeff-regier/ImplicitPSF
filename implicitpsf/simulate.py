@@ -23,12 +23,12 @@ from scipy.spatial import cKDTree
 from implicitpsf.splits import assign_split
 
 PIXEL_SCALE = 0.263
-WIDTH, HEIGHT = 1024, 2048
+WIDTH, HEIGHT = 2048, 4096  # real DES CCD 31 dimensions (was a 1024x2048 quarter-frame)
 PATCH = 32
 NOISE_SIGMA = 1.0
 MOFFAT_BETA = 2.5
-N_STARS_RANGE = (120, 240)
-FLUX_RANGE = (2e3, 1e5)
+N_STARS_RANGE = (90, 150)  # ~99 clean stars/exposure to match real density over the full CCD
+FLUX_RANGE = (2e3, 6e5)  # real clean-star flux p10-p90 ~7e3-5e5 (bright tail matters)
 FWHM_BASE_RANGE = (2.6, 5.4)  # pixels, per-exposure seeing
 FWHM_VARIATION = 0.15  # fractional field variation
 SHEAR_SCALE = 0.04
@@ -39,6 +39,7 @@ ISOLATION_FLUX_RATIO = 0.1
 GALAXY_RE_RANGE = (1.5, 6.0)  # pixels, half-light radius of injected galaxy detections
 GALAXY_SERSIC_RANGE = (0.5, 4.0)
 GALAXY_SHEAR_MAX = 0.5  # max |reduced shear| of an injected galaxy
+GALAXY_FLUX_RANGE = (1e3, 8e4)  # real galaxies are ~4x fainter than stars (p10-p90 2e3-6e4)
 TYPE_CLEAN, TYPE_STAR_CONTEXT, TYPE_GALAXY = 0, 1, 2
 
 
@@ -136,7 +137,9 @@ def sample_galaxies(rng, n_galaxies):
     return {
         "x": rng.uniform(margin, WIDTH - margin, n_galaxies),
         "y": rng.uniform(margin, HEIGHT - margin, n_galaxies),
-        "flux": np.exp(rng.uniform(np.log(FLUX_RANGE[0]), np.log(FLUX_RANGE[1]), n_galaxies)),
+        "flux": np.exp(
+            rng.uniform(np.log(GALAXY_FLUX_RANGE[0]), np.log(GALAXY_FLUX_RANGE[1]), n_galaxies)
+        ),
         "color": np.clip(rng.normal(COLOR_MEAN, COLOR_SCATTER, n_galaxies), -0.5, 3.0),
         "re_pix": rng.uniform(*GALAXY_RE_RANGE, n_galaxies),
         "sersic_n": rng.uniform(*GALAXY_SERSIC_RANGE, n_galaxies),
