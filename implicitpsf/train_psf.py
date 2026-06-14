@@ -120,7 +120,8 @@ def make_scheduler(optimizer, max_epochs, warmup_epochs=1):
 
 
 def save_checkpoint(model, optimizer, epoch, val_loss, out_dir):
-    path = Path(out_dir) / f"epoch_{epoch:03d}.pt"
+    # overwrite a single rolling checkpoint; per-epoch files blow past the home quota
+    path = Path(out_dir) / "last.pt"
     torch.save(
         {
             "epoch": epoch,
