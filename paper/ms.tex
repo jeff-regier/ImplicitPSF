@@ -347,6 +347,37 @@ second-order \texttt{BasisPolynomial}, $4\sigma$ rejection) and \textsc{PSFEx}
 \software{Astropy \citep{Astropy2022}, GalSim \citep{Rowe2015}, SEP \citep{Barbary2016},
 PyTorch \citep{Paszke2019}, PIFF \citep{Jarvis2021}, PSFEx \citep{Bertin2011}}
 
+
+\appendix
+
+\section{Real-data star selection and PSF examples}\label{app:examples}
+
+Figure~\ref{fig:selection} shows a region of a real DES single-epoch $r$-band exposure
+with the source selection overlaid: clean stars used for fitting and scoring (green),
+held-out reserved stars (blue), and additional context-only stellar detections (orange).
+Galaxies (the extended sources, e.g.\ the bright object near the center) are detected but,
+under the point-source-context policy (\S\ref{sec:method}), are not attended to.
+Figure~\ref{fig:psfcompare} compares, for a single high-S/N reserved test star, the
+observed stamp against the PSFEx, PIFF, and ImplicitPSF models evaluated at that position
+(each method having seen only the non-reserved stars). All three reproduce the stellar
+profile; PIFF's per-exposure interpolation is visibly noisier in the wings.
+
+\begin{figure}
+\centering
+\includegraphics[width=\columnwidth]{figures/fig_des_selection.pdf}
+\caption{Star selection on a real DES exposure. Green: clean stars (fit and score).
+Blue: reserved (held out for evaluation). Orange: context-only stellar detections.
+Extended sources (galaxies) are excluded from the attention context.\label{fig:selection}}
+\end{figure}
+
+\begin{figure*}
+\centering
+\includegraphics[width=\textwidth]{figures/fig_psf_comparison.pdf}
+\caption{The same reserved test star (left, observed) and the PSF predicted at its
+position by PSFEx, PIFF, and ImplicitPSF. Each model was fit/conditioned on the
+non-reserved stars only. Common linear stretch.\label{fig:psfcompare}}
+\end{figure*}
+
 \bibliographystyle{aasjournalv7}
 \bibliography{ms}
 
