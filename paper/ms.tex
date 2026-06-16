@@ -5,6 +5,9 @@
 \shorttitle{An Amortized Continuous PSF Field for DES}
 \shortauthors{Regier et al.}
 
+\usepackage{tikz}
+\usetikzlibrary{positioning,arrows.meta,fit,backgrounds,calc}
+
 \begin{document}
 
 \title{An Amortized Continuous PSF Field for DES Single-Epoch Imaging}
@@ -65,8 +68,75 @@ the PSF at \emph{star-free} positions, where galaxies are measured; predicting h
 stars is the training objective and the validation instrument. We train and evaluate on
 DES single-epoch data and benchmark against \textsc{PIFF} and \textsc{PSFEx} run by us
 under matched conditions.
+\begin{figure*}
+\centering
+\begin{tikzpicture}[
+  node distance=5mm and 8mm,
+  box/.style={draw, rounded corners, align=center, minimum height=9mm,
+              font=\footnotesize, fill=blue!6, inner sep=3pt},
+  dat/.style={draw, align=center, minimum height=9mm, font=\footnotesize,
+              fill=gray!8, inner sep=3pt},
+  net/.style={draw, rounded corners, align=center, minimum height=9mm,
+              font=\footnotesize\bfseries, fill=red!8, inner sep=3pt},
+  arr/.style={-{Stealth[length=2mm]}, thick}]
+\node[dat] (exp) {DES exposure\\(single-epoch)};
+\node[box, right=of exp] (det) {detect (SEP)\\+ DR2 match};
+\node[dat, right=of det] (ctx) {context stars\\$\{x,y,\,g{-}i,\,f,\,\mathrm{cutout}\}$};
+\node[net, right=of ctx] (npsf) {attention\\PSF field};
+\node[box, above right=4mm and 9mm of npsf] (res)
+  {query reserved star\\$\to\ \chi^2$ \footnotesize(train/val)};
+\node[box, below right=4mm and 9mm of npsf] (gal)
+  {query star-free position\\$\to$ render ePSF $\to$ convolve galaxy};
+\draw[arr] (exp)--(det); \draw[arr] (det)--(ctx); \draw[arr] (ctx)--(npsf);
+\draw[arr] (npsf.east) to[out=30,in=180] (res.west);
+\draw[arr] (npsf.east) to[out=-30,in=180] (gal.west);
+\end{tikzpicture}
+\caption{Overall workflow. A single network, trained across exposures, maps an
+exposure's detected stars (context) to a continuous PSF field. Querying held-out reserved
+stars provides the training objective and validation; the inferential target is the PSF
+at star-free positions, rendered (oversampled) to convolve galaxy models.\label{fig:workflow}}
+\end{figure*}
+
+
 
 \section{Method} \label{sec:method}
+\begin{figure*}
+\centering
+\begin{tikzpicture}[
+  node distance=3.5mm and 7mm,
+  enc/.style={draw, rounded corners, align=center, minimum height=7mm,
+              font=\scriptsize, fill=gray!8, inner sep=2.5pt},
+  op/.style={draw, circle, font=\scriptsize, inner sep=1pt, minimum size=4mm, fill=white},
+  att/.style={draw, rounded corners, align=center, minimum height=9mm,
+              font=\scriptsize\bfseries, fill=red!8, inner sep=3pt},
+  dec/.style={draw, rounded corners, align=center, minimum height=7mm,
+              font=\scriptsize, fill=blue!6, inner sep=2.5pt},
+  arr/.style={-{Stealth[length=1.6mm]}, semithick}]
+% per-source token encoder
+\node[enc] (cut) {cutout $32^2$\\$\to$ CNN/MLP};
+\node[enc, below=of cut] (pos) {position\\$\to$ sinusoidal};
+\node[enc, below=of pos] (sca) {color, $\log f$\\$\to$ linear};
+\node[op, right=6mm of pos] (sum) {$+$};
+\draw[arr] (cut.east) -- (sum); \draw[arr] (pos.east) -- (sum); \draw[arr] (sca.east) -- (sum);
+\node[align=center, font=\scriptsize, above=1mm of cut] {\emph{per source $i$ (point sources only)}};
+\node[att, right=8mm of sum] (mha) {multi-head\\self-attention\\$\times N$};
+\draw[arr] (sum) -- node[above, font=\scriptsize]{tokens} (mha);
+\node[dec, right=8mm of mha] (film) {FiLM-modulated\\coordinate decoder\\(polar grid)};
+\draw[arr] (mha) -- node[above, font=\scriptsize]{context feats} (film);
+\node[enc, above=5mm of film] (q) {query: $x,y$, color, $f$};
+\draw[arr] (q) -- (film);
+\node[dec, right=8mm of film, fill=green!8] (psf) {PSF stamp\\(any oversampling)};
+\draw[arr] (film) -- (psf);
+\end{tikzpicture}
+\caption{Network architecture. Each context source (restricted to point sources;
+\S\ref{sec:method}) is encoded from its pixel cutout, sky position, and scalar
+color/$\log$-flux into a token. Multi-head self-attention mixes the context; a
+FiLM-modulated coordinate decoder, conditioned on the attended features and the query
+(position, color, flux), renders the pixel-convolved PSF at any position and oversampling
+factor.\label{fig:arch}}
+\end{figure*}
+
+
 
 \paragraph{Architecture} Each detected source is encoded from its pixel cutout (a learned
 image encoder applied to the scale-normalized stamp), its sky position (sinusoidal
