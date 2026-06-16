@@ -413,6 +413,41 @@ non-reserved stars only. Common linear stretch.\label{fig:psfcompare}}
 
 For comparison with standard per-exposure PSF validation \citep[cf.][]{Jarvis2021}, we report the same diagnostics.
 
+Table~\ref{tab:perband} breaks the headline metrics down by band. The amortized
+model has the smallest size scatter and median ellipticity error in every band,
+with the largest margins in $Y$ and $z$, where the broader, more variable PSF is
+hardest for per-exposure fits.
+
+\begin{deluxetable}{llccc}
+\tablecaption{Reserved-star residuals by band (test split). $T$ scatter is the
+robust standard deviation of $\delta T/T$; $|\delta e_1|$ is the median absolute
+$e_1$ residual; corr is the model--star $e_1$ correlation. Best per band in
+bold.\label{tab:perband}}
+\tablehead{\colhead{Band} & \colhead{Method} & \colhead{$T$ scat} &
+\colhead{$|\delta e_1|$} & \colhead{corr$(e_1)$}}
+\startdata
+$g$ & \textbf{This work} & \textbf{0.0331} & \textbf{0.0164} & \textbf{0.475} \\
+    & \textsc{PIFF}  & 0.0439 & 0.0188 & 0.448 \\
+    & \textsc{PSFEx} & 0.0417 & 0.0173 & 0.473 \\
+\hline
+$r$ & \textbf{This work} & \textbf{0.0291} & \textbf{0.0144} & \textbf{0.576} \\
+    & \textsc{PIFF}  & 0.0366 & 0.0164 & 0.535 \\
+    & \textsc{PSFEx} & 0.0340 & 0.0151 & 0.572 \\
+\hline
+$i$ & \textbf{This work} & \textbf{0.0274} & \textbf{0.0136} & \textbf{0.643} \\
+    & \textsc{PIFF}  & 0.0342 & 0.0155 & 0.605 \\
+    & \textsc{PSFEx} & 0.0339 & 0.0144 & 0.637 \\
+\hline
+$z$ & \textbf{This work} & \textbf{0.0272} & \textbf{0.0140} & \textbf{0.601} \\
+    & \textsc{PIFF}  & 0.0387 & 0.0160 & 0.503 \\
+    & \textsc{PSFEx} & 0.0359 & 0.0152 & 0.589 \\
+\hline
+$Y$ & \textbf{This work} & \textbf{0.0391} & \textbf{0.0210} & \textbf{0.568} \\
+    & \textsc{PIFF}  & 0.0513 & 0.0226 & 0.523 \\
+    & \textsc{PSFEx} & 0.0449 & 0.0221 & 0.550 \\
+\enddata
+\end{deluxetable}
+
 \begin{figure*}
 \centering
 \includegraphics[width=\textwidth]{figures/fig_spatial_residuals.pdf}
