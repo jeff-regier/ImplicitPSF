@@ -165,6 +165,11 @@ def parse_args():
         default=None,
         help="cap scored targets per step (memory); random subsets are unbiased",
     )
+    parser.add_argument(
+        "--point-source-context",
+        action="store_true",
+        help="attend only to point sources (stars) as context; gate out galaxies",
+    )
     parser.add_argument("--context-dropout-max", type=float, default=0.5)
     parser.add_argument("--no-attention", action="store_true")
     parser.add_argument(
@@ -231,6 +236,7 @@ def main():
         galaxy_mode=args.galaxy_mode,
         chi2_cap=args.chi2_cap,
         blend_max_targets=args.blend_max_targets,
+        point_source_context=args.point_source_context,
     )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)

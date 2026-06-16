@@ -175,9 +175,11 @@ class ImplicitPSF(pl.LightningModule):
         galaxy_mode="exclude",
         chi2_cap=None,
         blend_max_targets=None,
+        point_source_context=False,
     ):
         super().__init__()
         self.save_hyperparameters()
+        self.point_source_context = point_source_context
 
         self.patch_size = patch_size
         self.ccd_size = (ccd_width, ccd_height)
@@ -364,6 +366,9 @@ class ImplicitPSF(pl.LightningModule):
         star_types = batch["star_types"]
 
         context_mask = fluxes > 0
+        if self.point_source_context:  # only point sources (stars) inform the PSF
+            is_point = (star_types == 0) | (star_types == 1) | (star_types == 5)
+            context_mask = context_mask & is_point
         if self.training and self.context_dropout_max > 0:
             keep_frac = 1.0 - torch.rand(1, device=cutouts.device) * self.context_dropout_max
             kept = torch.rand_like(fluxes) < keep_frac

@@ -45,8 +45,12 @@ def render_at(model, batch, query_positions, query_colors, query_fluxes=None, ov
     positions = torch.cat([batch["positions"], query_positions.unsqueeze(0)], dim=1)
     colors = torch.cat([batch["colors"], query_colors.unsqueeze(0)], dim=1)
     fluxes = torch.cat([flux, query_fluxes.unsqueeze(0)], dim=1)
+    context = real
+    if model.point_source_context:  # match training: only point sources as context keys
+        st = batch["star_types"][0]
+        context = real & ((st == 0) | (st == 1) | (st == 5))
     context_mask = torch.cat(
-        [real.unsqueeze(0), torch.zeros(1, n_queries, dtype=torch.bool)], dim=1
+        [context.unsqueeze(0), torch.zeros(1, n_queries, dtype=torch.bool)], dim=1
     )
 
     with torch.no_grad():
