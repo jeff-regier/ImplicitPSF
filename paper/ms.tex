@@ -324,7 +324,7 @@ recovery is unstable below a few thousand exposures; real DES is well above this
 (ii)~the simulation's idealized PSF (Moffat, low-order polynomial field) favors the
 per-exposure baselines, so absolute-accuracy comparisons rest on real data; and
 (iii)~the galaxy-context finding argues that a PSF estimator's context should be gated to
-point sources, which we adopt.
+point sources, which we adopt. (iv)~A residual \emph{magnitude-dependent} size bias remains: the median $\delta T/T$ rises to ${\sim}{+}1.2\%$ at intermediate magnitudes (Fig.~\ref{fig:residmag}), where the per-exposure baselines stay within ${\pm}0.5\%$; this is consistent with the ${\sim}6\%$ over-broadening in galaxy recovery (\S\ref{sec:galrec}) and indicates that $\log$-flux conditioning only partially captures brighter--fatter---the main residual systematic to address before a shear analysis.
 
 \section{Conclusion} \label{sec:conclusion}
 
@@ -376,6 +376,35 @@ Extended sources (galaxies) are excluded from the attention context.\label{fig:s
 \caption{The same reserved test star (left, observed) and the PSF predicted at its
 position by PSFEx, PIFF, and ImplicitPSF. Each model was fit/conditioned on the
 non-reserved stars only. Common linear stretch.\label{fig:psfcompare}}
+\end{figure*}
+
+
+\section{Benchmark validation diagnostics}\label{app:benchmark}
+
+For comparison with standard per-exposure PSF validation \citep[cf.][]{Jarvis2021}, we report the same diagnostics.
+
+\begin{figure*}
+\centering
+\includegraphics[width=\textwidth]{figures/fig_spatial_residuals.pdf}
+\caption{Median ImplicitPSF residuals binned across the CCD (cf.\ PIFF Fig.~9).\label{fig:spatialres}}
+\end{figure*}
+
+\begin{figure}
+\centering
+\includegraphics[width=\columnwidth]{figures/fig_resid_vs_mag.pdf}
+\caption{Residuals versus instrumental magnitude (cf.\ PIFF Fig.~10). Our model (red) carries a magnitude-dependent size residual peaking at ${+}1.2\%$ (\S\ref{sec:discussion}).\label{fig:residmag}}
+\end{figure}
+
+\begin{figure}
+\centering
+\includegraphics[width=\columnwidth]{figures/fig_resid_vs_color.pdf}
+\caption{Size residual versus $g-i$ color (cf.\ PIFF Fig.~11); color conditioning keeps our chromatic residual flat.\label{fig:residcolor}}
+\end{figure}
+
+\begin{figure*}
+\centering
+\includegraphics[width=\textwidth]{figures/fig_whisker_resid.pdf}
+\caption{Residual PSF-ellipticity whiskers across the CCD, ImplicitPSF and PIFF (cf.\ PIFF Fig.~2).\label{fig:whisker}}
 \end{figure*}
 
 \bibliographystyle{aasjournalv7}
