@@ -25,7 +25,7 @@ from implicitpsf.splits import assign_split
 PIXEL_SCALE = 0.263
 WIDTH, HEIGHT = 2048, 4096  # real DES CCD 31 dimensions (was a 1024x2048 quarter-frame)
 PATCH = 32
-NOISE_SIGMA = 1.0
+NOISE_SIGMA = 20.0  # realistic sky noise: gives star SNR p50~54, galaxy SNR p50~14 (match DES)
 MOFFAT_BETA = 2.5
 N_STARS_RANGE = (90, 150)  # ~99 clean stars/exposure to match real density over the full CCD
 FLUX_RANGE = (2e3, 6e5)  # real clean-star flux p10-p90 ~7e3-5e5 (bright tail matters)
