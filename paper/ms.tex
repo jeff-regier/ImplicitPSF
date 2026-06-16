@@ -111,6 +111,20 @@ density, galaxy density ($3{:}1$), and per-source S/N are tuned to match the rea
 extraction. The simulation is the controlled instrument for the systematics studies in
 \S\ref{sec:sim}.
 
+
+\begin{figure*}
+\centering
+\includegraphics[width=\textwidth]{figures/fig_simdata.pdf}
+\caption{Example simulated cutouts. Clean stars (top) are compact point sources; injected galaxies (bottom) are visibly extended and elliptical (second-moment size $T\approx33$ vs $15\,$px$^2$). Both are presented to the network as context.\label{fig:simdata}}
+\end{figure*}
+
+
+\begin{figure}
+\centering
+\includegraphics[width=\columnwidth]{figures/fig_psffield.pdf}
+\caption{The true, spatially varying PSF ellipticity field in a simulated exposure (whisker length $\propto|e|$); the network must recover this at star-free positions.\label{fig:psffield}}
+\end{figure}
+
 \section{Results} \label{sec:results}
 
 \subsection{Reserved-star accuracy on real data} \label{sec:headline}
@@ -120,6 +134,13 @@ per-exposure fitting) matches or exceeds both baselines on every metric
 (Table~\ref{tab:headline}). Reserved ``clean'' stars carry a mild blend-contamination
 floor that suppresses absolute correlations for \emph{all} methods; the comparison is
 fair (identical stars) and the ordering is robust.
+\begin{figure*}
+\centering
+\includegraphics[width=\textwidth]{figures/fig_residuals.pdf}
+\caption{Reserved-star residual distributions on the DES test split. Our amortized model (red) is the narrowest in size and ellipticity.\label{fig:residuals}}
+\end{figure*}
+
+
 
 \begin{deluxetable}{lcccccc}
 \tablecaption{Reserved-star residuals on the DES test split (3{,}301 exposures,
@@ -148,6 +169,13 @@ exposures and 522 anchors (Table~\ref{tab:galrec}), our PSF recovers galaxy
 induces a large shape bias ($\Delta e_1=-0.14$). \textsc{PIFF} recovers size slightly
 better; our PSF is ${\sim}6\%$ too broad at star-free positions. For weak lensing, the
 ellipticity result is the consequential one.
+\begin{figure}
+\centering
+\includegraphics[width=\columnwidth]{figures/fig_galrec.pdf}
+\caption{Galaxy ellipticity recovery on real data (star-anchored injection). PIFF's PSF-ellipticity error biases recovered galaxy $e_1$ by $-0.14$; ours is unbiased.\label{fig:galrec}}
+\end{figure}
+
+
 
 \begin{deluxetable}{lccc}
 \tablecaption{Star-anchored galaxy injection--recovery (113 $r$-band exposures, 522
@@ -178,6 +206,13 @@ $k=100$), while \textsc{PIFF} collapses below $k\approx25$ ($\chi^2=5.1$, scatte
 at $k=5$). Amortization transfers information from the training set to sparsely-populated
 exposures.
 
+
+\begin{figure}
+\centering
+\includegraphics[width=\columnwidth]{figures/fig_sampeff.pdf}
+\caption{Size-residual scatter versus the number of fit stars $k$. The amortized model is nearly flat in $k$; PIFF degrades sharply below $k\approx25$.\label{fig:sampeff}}
+\end{figure}
+
 \subsection{Simulation studies} \label{sec:sim}
 
 \paragraph{Architecture ladder} On the star-free truth grid, $\chi^2/$dof improves along
@@ -201,6 +236,13 @@ context to point sources recovers \emph{both} components completely
 not. Galaxies are clearly distinguishable (cutout second moment $T\approx33$ versus
 $15\,{\rm px}^2$ for stars), so this is the model failing to use available information,
 fixed by the principled restriction that only point sources inform a PSF.
+\begin{figure*}
+\centering
+\includegraphics[width=\textwidth]{figures/fig_galaxy_context.pdf}
+\caption{Galaxy detections in the attention context corrupt the recovered PSF ellipticity. Left: with galaxies in context, model $e_1$ collapses to a constant (corr$=-0.04$). Middle: restricting the context to point sources recovers it (corr$=0.98$). Right: shape correlations across configurations---point-source context and galaxy-free both recover \emph{both} components; a coordinate change (diagonal) does not.\label{fig:galcontext}}
+\end{figure*}
+
+
 
 \section{Discussion} \label{sec:discussion}
 
