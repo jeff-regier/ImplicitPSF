@@ -24,6 +24,28 @@ from implicitpsf.splits import files_for_split, load_manifest
 QUEUE_TIMEOUT_SECONDS = 600
 
 
+class EMA:
+    """Exponential moving average of model weights; a shadow copy updated every step."""
+
+    def __init__(self, model, decay):
+        self.decay = decay
+        self.shadow = {k: v.detach().clone().float() for k, v in model.state_dict().items()}
+
+    @torch.no_grad()
+    def update(self, model):
+        for key, value in model.state_dict().items():
+            shadow = self.shadow[key]
+            if value.dtype.is_floating_point:
+                shadow.mul_(self.decay).add_(value.detach().float(), alpha=1.0 - self.decay)
+            else:
+                shadow.copy_(value)
+
+    def state_for(self, model):
+        """Shadow weights cast back to the model's parameter dtypes."""
+        reference = model.state_dict()
+        return {key: value.to(reference[key].dtype) for key, value in self.shadow.items()}
+
+
 def split_file_indices(manifest, split, band):
     """Map file name -> exposure indices for a split, optionally one band."""
     files = files_for_split(manifest, split)
@@ -82,7 +104,7 @@ def batch_producer(
 
 
 def run_epoch_phase(
-    model, optimizer, batch_queue, n_batches, phase, epoch, device, zero_color=False
+    model, optimizer, batch_queue, n_batches, phase, epoch, device, zero_color=False, ema=None
 ):
     """Consume one epoch's worth of batches for a phase; train if an optimizer is given."""
     losses = []
@@ -100,6 +122,8 @@ def run_epoch_phase(
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
+                if ema is not None:
+                    ema.update(model)
 
             losses.append(loss.item())
             pbar.set_postfix({"loss": f"{loss.item():.3e}", "queue": batch_queue.qsize()})
@@ -181,6 +205,12 @@ def parse_args():
         default=25,
         help="stop after this many epochs without val improvement",
     )
+    parser.add_argument(
+        "--ema-decay",
+        type=float,
+        default=None,
+        help="if set, validate and checkpoint exponential-moving-average weights",
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--queue-size", type=int, default=64)
     return parser.parse_args()
@@ -253,6 +283,7 @@ def main():
     with open(log_path, "w", newline="", encoding="utf-8") as handle:
         csv.writer(handle).writerow(["epoch", "train_loss", "val_loss", "lr", "seconds"])
 
+    ema = EMA(model, args.ema_decay) if args.ema_decay is not None else None
     best_val = float("inf")
     epochs_since_best = 0
     for epoch in range(args.max_epochs):
@@ -267,7 +298,13 @@ def main():
             epoch,
             device,
             zero_color=args.zero_color,
+            ema=ema,
         )
+        # validate and checkpoint the EMA weights; keep raw weights for the next epoch
+        raw_state = None
+        if ema is not None:
+            raw_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
+            model.load_state_dict(ema.state_for(model))
         model.eval()
         with torch.no_grad():
             val_loss = run_epoch_phase(
@@ -289,6 +326,8 @@ def main():
             csv.writer(handle).writerow([epoch, train_loss, val_loss, lr, round(seconds, 1)])
 
         checkpoint_path = save_checkpoint(model, optimizer, epoch, val_loss, out_dir)
+        if raw_state is not None:
+            model.load_state_dict(raw_state)  # resume training from raw, not EMA, weights
         if val_loss < best_val:
             best_val = val_loss
             epochs_since_best = 0
