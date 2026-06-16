@@ -28,13 +28,15 @@ def render_implicit(model, batch, reserved_mask, oversample=1):
     Returns:
         (1, n_stars, k, k) stamps on each star's data pixel grid
     """
+    device = next(model.parameters()).device
     context_mask = (batch["flux"] > 0) & ~reserved_mask
     with torch.no_grad():
-        return model(
-            batch["cutouts"],
-            batch["positions"],
-            batch["colors"],
-            batch["flux"],
-            context_mask,
+        stamps = model(
+            batch["cutouts"].to(device),
+            batch["positions"].to(device),
+            batch["colors"].to(device),
+            batch["flux"].to(device),
+            context_mask.to(device),
             oversample=oversample,
         )
+    return stamps.cpu()

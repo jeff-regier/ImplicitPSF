@@ -199,6 +199,7 @@ def parse_args():
         default=["implicit", "piff", "psfex"],
         choices=["implicit", "piff", "psfex"],
     )
+    parser.add_argument("--device", default="cpu", choices=["cpu", "cuda"])
     return parser.parse_args()
 
 
@@ -206,7 +207,7 @@ def eval_file_group(args, file_name, exposures):
     """Evaluate one data file's exposures (one worker task); returns (frames, n_failed)."""
     torch.set_num_threads(1)  # workers parallelize across exposures, not BLAS threads
     manifest = load_manifest(args.manifest)
-    model = load_model(args.checkpoint) if "implicit" in args.methods else None
+    model = load_model(args.checkpoint, device=args.device) if "implicit" in args.methods else None
     data = load_exposure_file(Path(args.data_dir) / file_name)
 
     frames, n_failed = [], 0
