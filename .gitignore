@@ -35,3 +35,18 @@ des_directories.txt
 .ruff_cache/
 results/morning_report/.REPORT.md.swp
 results/real_test_baselines.parquet
+# LaTeX build artifacts
+paper/*.aux
+paper/*.log
+paper/*.out
+paper/*.blg
+paper/*.bbl
+
+# LaTeX build artifacts + vendored AAS class (re-fetch from CTAN: macros/latex/contrib/aastex.zip)
+paper/*.aux
+paper/*.log
+paper/*.out
+paper/*.blg
+paper/*.bbl
+paper/aastex701.cls
+paper/aasjournalv7.bst

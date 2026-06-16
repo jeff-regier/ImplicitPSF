@@ -1,6 +1,6 @@
-% AJ manuscript -- AASTeX. Compile with: latexmk -pdf ms.tex  (needs aastex631.cls)
+% AJ manuscript -- AASTeX. Compile with: latexmk -pdf ms.tex  (needs aastex701.cls)
 % Draft generated 2026-06-16. Numbers from the frozen DES test split unless noted.
-\documentclass[twocolumn]{aastex631}
+\documentclass[twocolumn]{aastex701}
 
 \shorttitle{An Amortized Continuous PSF Field for DES}
 \shortauthors{Regier et al.}
@@ -10,9 +10,11 @@
 \title{An Amortized Continuous PSF Field for DES Single-Epoch Imaging}
 
 \author{Jeffrey Regier}
+\email{regier@umich.edu}
 \affiliation{Department of Statistics, University of Michigan, Ann Arbor, MI 48109, USA}
 
 \author{[Collaborators]}
+\email{collaborator@example.edu}
 \affiliation{[Affiliation]}
 
 \begin{abstract}
@@ -233,6 +235,7 @@ second-order \texttt{BasisPolynomial}, $4\sigma$ rejection) and \textsc{PSFEx}
 \software{Astropy \citep{Astropy2022}, GalSim \citep{Rowe2015}, SEP \citep{Barbary2016},
 PyTorch \citep{Paszke2019}, PIFF \citep{Jarvis2021}, PSFEx \citep{Bertin2011}}
 
-% \bibliography{ms}   % TODO: provide ms.bib
+\bibliographystyle{aasjournalv7}
+\bibliography{ms}
 
 \end{document}
