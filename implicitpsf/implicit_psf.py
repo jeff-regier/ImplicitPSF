@@ -370,9 +370,12 @@ class ImplicitPSF(pl.LightningModule):
             is_point = (star_types == 0) | (star_types == 1) | (star_types == 5)
             context_mask = context_mask & is_point
         if self.training and self.context_dropout_max > 0:
+            gated = context_mask  # pre-dropout context (gating may shrink it to a few)
             keep_frac = 1.0 - torch.rand(1, device=cutouts.device) * self.context_dropout_max
             kept = torch.rand_like(fluxes) < keep_frac
             context_mask = context_mask & kept
+            empty = ~context_mask.any(dim=1)  # dropout must not empty an exposure's context
+            context_mask[empty] = gated[empty]
 
         if self.loss_mode == "blend":
             chi2 = blend_chi2(
