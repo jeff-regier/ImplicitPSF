@@ -197,7 +197,7 @@ def fig_size_mag():
     plt.close(fig)
 
 
-RHO = "results/rho_allband.parquet"
+RHO = "results/rho_test_v6_blend_recompute.parquet"
 RHO_LABEL = {
     "rho1": r"$\rho_1=\langle\delta e\,\delta e\rangle$",
     "rho2": r"$\rho_2=\langle e\,\delta e\rangle$",

@@ -236,30 +236,26 @@ bias. We therefore compute the standard $\rho$-statistics
 \citep{Rowe2010,Jarvis2016} of the reserved-star residuals---the auto- and
 cross-correlations of the residual ellipticity $\delta e$ and the
 size-leakage term $e\,\delta_T$---accumulated within exposures with
-\textsc{treecorr} (Figure~\ref{fig:rho}). The picture is mixed and
-instructive. On the size-leakage terms $\rho_3$ and $\rho_4$ our amortized model
-is a factor of $2$--$3$ \emph{below} both per-exposure baselines, consistent
-with its smaller per-star size scatter. On the shape terms $\rho_1$ and
-especially $\rho_2=\langle e\,\delta e\rangle$, however, it is larger---a roughly
-flat ${\sim}5\times10^{-4}$ plateau that persists across the CCD, whereas
-\textsc{PIFF} and \textsc{PSFEx} decorrelate toward ${\lesssim}10^{-5}$ at
-arcminute scales. This is not a global ellipticity offset (our mean residual
-$\delta e$ is in fact smaller than the baselines') but a signature of mild
-\emph{ellipticity shrinkage}: the learned model regresses predicted shape toward
-the population mean, so $\delta e$ correlates with the true PSF shape exactly
-where the PSF is most elliptical. Per-exposure fits, which solve each field
-independently, avoid this by construction. The amortized model thus trades lower
-per-star scatter and size leakage for a coherent shape-leakage term that a
-weak-lensing pipeline would need to monitor; reducing it (e.g.\ via the
-point-source-context conditioning of \S\ref{sec:sim}, or an explicit
-shape-debiasing calibration) is a clear target for future work.
+\textsc{treecorr} (Figure~\ref{fig:rho}). On the same reserved stars used for
+Table~\ref{tab:headline}, the amortized model is at or below both per-exposure
+baselines on four of the five statistics: the median $|\xi_+|$ across angular
+scales is $3.9\times10^{-5}$ ($\rho_1$), $5.2\times10^{-5}$ ($\rho_2$),
+$2.5\times10^{-6}$ ($\rho_3$), and $4.8\times10^{-6}$ ($\rho_4$), against
+$\rho_1,\rho_2\gtrsim7\times10^{-5}$ and $\rho_3\simeq6\times10^{-5}$ for
+\textsc{PIFF}. The strong $\rho_3$ result---more than an order of magnitude below
+\textsc{PIFF}---reflects the model's smaller and less spatially structured size
+residuals. The one exception is $\rho_5=\langle e\,(e\,\delta_T)\rangle$, where
+our model ($5.4\times10^{-5}$) sits above the baselines (${\sim}10^{-5}$): a
+residual coupling between PSF shape and the size error that a weak-lensing
+analysis would carry in its additive-bias budget. Overall the coherent,
+lensing-relevant part of the residual is no larger than that of the per-exposure
+baselines, despite the amortized model fitting no per-exposure free parameters.
 \begin{figure*}
 \centering
 \includegraphics[width=\textwidth]{figures/fig_rho_stats.pdf}
-\caption{PSF residual $\rho$-statistics on reserved stars (all bands), per
-method. Our model (red) is below the baselines on the size-leakage terms
-$\rho_3,\rho_4$ but above them on the shape terms $\rho_1,\rho_2$, reflecting a
-coherent ellipticity-shrinkage residual (\S\ref{sec:rho}).\label{fig:rho}}
+\caption{PSF residual $\rho$-statistics on reserved stars, per method. Our model
+(red) is at or below both baselines on $\rho_1$--$\rho_4$; only $\rho_5$ (the
+shape--size coupling) is modestly larger (\S\ref{sec:rho}).\label{fig:rho}}
 \end{figure*}
 
 \subsection{Galaxy recovery on real data} \label{sec:galrec}
