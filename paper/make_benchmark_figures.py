@@ -197,8 +197,50 @@ def fig_size_mag():
     plt.close(fig)
 
 
+RHO = "results/rho_allband.parquet"
+RHO_LABEL = {
+    "rho1": r"$\rho_1=\langle\delta e\,\delta e\rangle$",
+    "rho2": r"$\rho_2=\langle e\,\delta e\rangle$",
+    "rho3": r"$\rho_3=\langle e\delta_T\, e\delta_T\rangle$",
+    "rho4": r"$\rho_4=\langle\delta e\, e\delta_T\rangle$",
+    "rho5": r"$\rho_5=\langle e\, e\delta_T\rangle$",
+}
+
+
+def fig_rho_stats():
+    """rho1-rho5 vs angular scale, all three methods (cf. PIFF Jarvis+2021 Fig. 12)."""
+    d = pd.read_parquet(RHO)
+    fig, axes = plt.subplots(2, 3, figsize=(7.2, 4.6), sharex=True)
+    order = ["rho1", "rho2", "rho3", "rho4", "rho5"]
+    for ax, r in zip(axes.ravel()[: len(order)], order, strict=True):
+        for m in ["implicit", "piff", "psfex"]:
+            a = d[(d.method == m) & (d.rho == r)].sort_values("theta")
+            ax.plot(
+                a.theta,
+                np.abs(a.xip),
+                "o-",
+                ms=2.5,
+                color=METHOD_COLOR[m],
+                label=METHOD_LABEL[m],
+            )
+        ax.set_xscale("log")
+        ax.set_yscale("log")
+        ax.set_title(RHO_LABEL[r], fontsize=8.5)
+        ax.set_ylim(1e-7, 2e-3)
+    axes[1, 0].set_xlabel(r"$\theta$ (arcmin)")
+    axes[1, 1].set_xlabel(r"$\theta$ (arcmin)")
+    axes[0, 0].set_ylabel(r"$|\xi_+(\theta)|$")
+    axes[1, 0].set_ylabel(r"$|\xi_+(\theta)|$")
+    axes[0, 0].legend(fontsize=7, frameon=False)
+    axes[1, 2].axis("off")
+    fig.suptitle("PSF residual rho-statistics (reserved stars, all bands)", fontsize=9, y=1.0)
+    fig.savefig(f"{FIGDIR}/fig_rho_stats.pdf")
+    plt.close(fig)
+
+
 def main():
     for name, fn in [
+        ("rho_stats", fig_rho_stats),
         ("spatial_residuals", fig_spatial_residuals),
         ("resid_vs_mag", fig_resid_vs_mag),
         ("resid_vs_color", fig_resid_vs_color),
