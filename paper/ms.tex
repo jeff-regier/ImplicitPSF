@@ -279,6 +279,49 @@ correlation. Best in bold.\label{tab:headline}}
 \enddata
 \end{deluxetable}
 
+\subsection{Pixel-level and astrometric validation} \label{sec:pixval}
+
+Because the model regresses the effective PSF---the expected pixel values---the
+reserved-star quality of fit can be assessed directly in the modeled (pixel) space,
+the validation native to effective-PSF work \citep{AndersonKing2000}. Two checks
+follow. First, the inverse-variance $\chi^2/$dof is a noise-calibrated goodness of
+fit: at $1.04$ (Table~\ref{tab:headline}) the per-pixel residuals are consistent with
+photon and read noise, i.e.\ no unmodeled pixel-level structure---a statement available
+to a sub-pixel model only through its rendered output. Second, the predicted ePSF
+centroid matches the star centroid to $0.010$\,px ($2.6$\,mas) in median offset, versus
+$0.017$\,px ($4.5$\,mas) for \textsc{PIFF} and $0.020$\,px ($5.1$\,mas) for \textsc{PSFEx}
+(Table~\ref{tab:astrom})---a near $2\times$ improvement on the very quantity the ePSF
+formalism was constructed to optimize.
+
+\begin{deluxetable}{lccc}
+\tablecaption{Astrometric residual of the model PSF centroid relative to the star, on
+the reserved test stars. Per-axis scatter is the robust standard deviation; the offset
+is the median radius ($0.263''$/px). Best in bold.\label{tab:astrom}}
+\tablehead{\colhead{Method} & \colhead{$\sigma(\delta x)$ [px]} &
+\colhead{$\sigma(\delta y)$ [px]} & \colhead{median $|\delta|$ [mas]}}
+\startdata
+\textbf{This work} & \textbf{0.008} & \textbf{0.009} & \textbf{2.6} \\
+\textsc{PIFF}      & 0.015 & 0.013 & 4.5 \\
+\textsc{PSFEx}     & 0.015 & 0.017 & 5.1 \\
+\enddata
+\end{deluxetable}
+
+Third, stacking the unit-normalized residual (observed star minus model, as a fraction of
+total light) over $306$ reserved stars isolates any coherent shape error that second
+moments can miss (Figure~\ref{fig:residstack}). Our model leaves the flattest residual
+(RMS $2.6\times10^{-4}$); \textsc{PIFF} and \textsc{PSFEx} leave a visible negative core
+($3.5$ and $4.4\times10^{-4}$), a higher-order mismatch in the central pixels that is
+consistent with their larger size residuals and is invisible to the size and ellipticity
+summaries alone.
+\begin{figure*}
+\centering
+\includegraphics[width=\textwidth]{figures/fig_residual_stack.pdf}
+\caption{Stacked normalized pixel residual (observed star $-$ model, unit-sum) over 306
+reserved test stars, on a common scale. Our amortized model leaves the flattest residual;
+the per-exposure baselines retain a coherent central core---a higher-order shape error
+that second-moment metrics do not capture (\S\ref{sec:pixval}).\label{fig:residstack}}
+\end{figure*}
+
 \subsection{Residual two-point statistics} \label{sec:rho}
 
 Per-star residuals understate the impact on weak lensing, where the
