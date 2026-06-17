@@ -361,8 +361,14 @@ predicts the PSF there from the \emph{other} stars and recovers the galaxy. The 
 exposures and 522 anchors (Table~\ref{tab:galrec}), our PSF recovers galaxy
 \emph{ellipticity} essentially without bias, whereas \textsc{PIFF}'s PSF-ellipticity error
 induces a large shape bias ($\Delta e_1=-0.14$). \textsc{PIFF} recovers size slightly
-better; our PSF is ${\sim}6\%$ too broad at star-free positions. For weak lensing, the
-ellipticity result is the consequential one.
+better; our recovered galaxy sizes are ${\sim}6\%$ low. This is \emph{not} a second-moment
+size error---rendered at a fiducial flux, the model's PSF size is accurate at both star
+and star-free positions (within $1\%$)---but a profile-shape effect: the model's PSF is
+slightly \emph{under-concentrated}, carrying ${\sim}2\%$ less encircled energy in the
+central few pixels than the empirical PSF, which biases recovered galaxy sizes low. We
+attribute this to spectral bias of the coordinate decoder, which under-resolves the sharp
+PSF core (\S\ref{sec:discussion}). For weak lensing, the ellipticity result is the
+consequential one.
 \begin{figure}
 \centering
 \includegraphics[width=\columnwidth]{figures/fig_galrec.pdf}
@@ -455,7 +461,18 @@ recovery is unstable below a few thousand exposures; real DES is well above this
 (ii)~the simulation's idealized PSF (Moffat, low-order polynomial field) favors the
 per-exposure baselines, so absolute-accuracy comparisons rest on real data; and
 (iii)~the galaxy-context finding argues that a PSF estimator's context should be gated to
-point sources, which we adopt. (iv)~A residual \emph{magnitude-dependent} size bias remains: the median $\delta T/T$ rises to ${\sim}{+}1.2\%$ at intermediate magnitudes (Fig.~\ref{fig:residmag}), where the per-exposure baselines stay within ${\pm}0.5\%$; this is consistent with the ${\sim}6\%$ over-broadening in galaxy recovery (\S\ref{sec:galrec}) and indicates that $\log$-flux conditioning only partially captures brighter--fatter---the main residual systematic to address before a shear analysis.
+point sources, which we adopt. (iv)~The model slightly \emph{under-concentrates} the PSF
+core: rendered at a fiducial flux its second-moment size is accurate, but it carries
+${\sim}2\%$ less encircled energy in the central few pixels than the empirical PSF, which
+biases recovered galaxy sizes ${\sim}6\%$ low (\S\ref{sec:galrec}). We attribute this to
+spectral bias of the coordinate decoder---MLP decoders preferentially fit smooth
+functions and under-resolve sharp peaks---and expect sharper positional encodings (Fourier
+features) or a core-weighted loss to mitigate it; it is the main residual systematic to
+address before a shear analysis. A separate, milder effect appears only in the
+reserved-star metric (Fig.~\ref{fig:residmag}): evaluated at each star's \emph{own} flux,
+$\delta T/T$ rises to ${\sim}{+}1.2\%$ at faint magnitudes, a spurious flux--size trend in
+the conditioning; because the inferential PSF is rendered at a fiducial flux, this does not
+propagate to galaxy measurement.
 
 \section{Conclusion} \label{sec:conclusion}
 
