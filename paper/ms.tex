@@ -2,7 +2,7 @@
 % Draft generated 2026-06-16. Numbers from the frozen DES test split unless noted.
 \documentclass[twocolumn]{aastex701}
 
-\shorttitle{An Implicit Effective-PSF Field for DES}
+\shorttitle{A Neural Effective-PSF Field for DES}
 \shortauthors{Regier et al.}
 
 \usepackage{tikz}
@@ -10,7 +10,7 @@
 
 \begin{document}
 
-\title{Learning the Effective PSF: An Amortized, Implicit PSF Field for
+\title{Learning the Effective PSF: An Amortized, Neural PSF Field for
 DES Single-Epoch Imaging}
 
 \author{Jeffrey Regier}
@@ -23,15 +23,17 @@ DES Single-Epoch Imaging}
 
 \begin{abstract}
 Accurate point-spread-function (PSF) models are the dominant systematic in weak-lensing
-shear measurement. The standard approach fits an independent PSF model per exposure
-(e.g., \textsc{PSFEx}, \textsc{PIFF}) from that exposure's stars. We instead learn a
-single \emph{amortized} continuous PSF field: a multi-head attention network takes an
-exposure's stars as context (position, color, flux, and pixel cutouts) and predicts the
-PSF at any queried position and resolution, with no per-exposure fitting at test time.
-The network targets the \emph{pixel-convolved} (effective) PSF---the expected pixel
-values a point source would produce---rather than a sub-pixel surface-brightness profile,
-making the directly observable, identifiable quantity the regression target and the
-exact kernel needed to forward-model galaxies.
+shear measurement. Per-exposure fitters (e.g., \textsc{PSFEx}, \textsc{PIFF}) represent
+the PSF as a sub-pixel surface-brightness profile that must be convolved with an assumed
+pixel response to predict an image. We instead target the \emph{effective} PSF---the
+pixel-convolved point-source response, i.e.\ the expected pixel values a point source
+produces. This is the quantity that sampled data actually identify and the exact kernel
+needed to forward-model galaxies. A single \emph{amortized} neural network (multi-head
+attention over an exposure's stars---position, color, flux, and pixel cutouts) predicts
+this effective PSF at any queried position and oversampling, with no per-exposure fitting
+at test time; trained by inverse-variance least squares, it regresses the conditional
+expectation of the pixels, so its training target, the quantity it models, and the
+reserved-star residuals it is validated on all coincide.
 On 3{,}301 frozen test exposures of Dark Energy Survey (DES) single-epoch imaging
 (CCD~31, $grizY$; 73{,}609 reserved stars), the model matches or exceeds \textsc{PIFF}
 and \textsc{PSFEx} on every metric: size-residual scatter $0.030$ versus $0.039/0.037$,
