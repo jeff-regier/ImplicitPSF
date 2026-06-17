@@ -335,7 +335,11 @@ context to point sources recovers \emph{both} components completely
 [corr$(e_1,e_2)=0.98$, matching the galaxy-free ideal]; a coordinate-system change does
 not. Galaxies are clearly distinguishable (cutout second moment $T\approx33$ versus
 $15\,{\rm px}^2$ for stars), so this is the model failing to use available information,
-fixed by the principled restriction that only point sources inform a PSF.
+fixed by the principled restriction that only point sources inform a PSF. On the real
+test set this restriction carries no accuracy cost: a point-source-context model matches
+the headline model's reserved-star residuals (size scatter $0.031$ versus $0.030$;
+identical median ellipticity error and shape correlation), confirming that the fix
+generalizes from simulation to data without trading away real-world performance.
 \begin{figure*}
 \centering
 \includegraphics[width=\textwidth]{figures/fig_galaxy_context.pdf}
