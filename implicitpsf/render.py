@@ -53,6 +53,14 @@ def render_at(model, batch, query_positions, query_colors, query_fluxes=None, ov
         [context.unsqueeze(0), torch.zeros(1, n_queries, dtype=torch.bool)], dim=1
     )
 
+    device = next(model.parameters()).device
     with torch.no_grad():
-        stamps = model(cutouts, positions, colors, fluxes, context_mask, oversample=oversample)
-    return stamps[0, -n_queries:]
+        stamps = model(
+            cutouts.to(device),
+            positions.to(device),
+            colors.to(device),
+            fluxes.to(device),
+            context_mask.to(device),
+            oversample=oversample,
+        )
+    return stamps[0, -n_queries:].cpu()
