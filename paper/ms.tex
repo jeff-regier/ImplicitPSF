@@ -2,7 +2,7 @@
 % Draft generated 2026-06-16. Numbers from the frozen DES test split unless noted.
 \documentclass[twocolumn]{aastex701}
 
-\shorttitle{An Amortized Continuous PSF Field for DES}
+\shorttitle{An Implicit Effective-PSF Field for DES}
 \shortauthors{Regier et al.}
 
 \usepackage{tikz}
@@ -10,7 +10,8 @@
 
 \begin{document}
 
-\title{An Amortized Continuous PSF Field for DES Single-Epoch Imaging}
+\title{Learning the Effective PSF: An Amortized, Implicit PSF Field for
+DES Single-Epoch Imaging}
 
 \author{Jeffrey Regier}
 \email{regier@umich.edu}
@@ -176,15 +177,26 @@ the decoder and FiLM modulation of the decoder by the attended context features.
 query grid, optionally oversampled. Because the loss below compares predicted stamps to
 \emph{observed} star pixels, the model regresses the observable by construction: it
 learns $\mathbb{E}[\text{pixel value}\mid\text{point source at }(x,y)]$ directly, rather
-than fitting a sub-pixel profile and assuming a pixel kernel. This is also what makes the
-benchmark fair: we score all three methods on moments measured in pixel space (model
-stamp versus star stamp), so no method is privileged by its internal representation. The
+than fitting a sub-pixel profile and assuming a pixel kernel. Identifiability aligns the
+three things that a non-identifiable model keeps separate: our training target, the
+quantity we model, and the quantity we validate all coincide, so reserved-star residuals
+(\S\ref{sec:results}) directly test what we fit. A surface-brightness model is instead
+validated only through pixel- or moment-space summaries of its rendered output---the
+same observable space---so its extra sub-pixel degrees of freedom are never themselves
+constrained by the data. This is also what makes the benchmark fair: we score all three
+methods on moments measured in pixel space (model stamp versus star stamp), so no method
+is privileged by its internal representation. The
 same pixel-convolved output is the kernel used to forward-model galaxies in
 \S\ref{sec:galrec}; oversampling the render reduces the discretization error of that
 convolution for compact sources.
 
 \paragraph{Loss} Training minimizes an inverse-variance $\chi^2$ between predicted and
-observed star cutouts, with the per-star amplitude solved in closed form. We introduce a
+observed star cutouts, with the per-star amplitude solved in closed form. Star pixels are
+noisy realizations whose conditional mean is the effective PSF; a squared-error objective
+is minimized by the conditional expectation $\mathbb{E}[\,\text{pixel}\mid\text{source,
+context}\,]$, so minimizing it estimates exactly that quantity---the identifiable
+effective PSF---consistently. The network has no degrees of freedom that the data cannot
+constrain, in contrast to a sub-pixel surface-brightness model. We introduce a
 \emph{blend forward-model} loss: rather than treat each clean star as isolated, we model
 its cutout as a generalized-least-squares sum of the target plus its detected neighbors,
 all rendered by the same decoder (\S\ref{sec:sim}). Detected galaxies near a target are
