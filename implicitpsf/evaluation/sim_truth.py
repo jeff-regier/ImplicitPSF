@@ -74,7 +74,7 @@ def implicit_grid_stamps(model, data, index, fit_mask, x, y, ref_color):
     return render_at(model, batch, queries, colors).numpy()
 
 
-def evaluate_exposure(model, data, index, reserved_ids, workdir):
+def evaluate_exposure(model, data, index, reserved_ids, workdir, methods):
     clean, reserved = exposure_masks(data, index, reserved_ids)
     fit_mask = clean & ~reserved
 
@@ -123,8 +123,10 @@ def evaluate_exposure(model, data, index, reserved_ids, workdir):
         psf_path = fit_psfex(ldac_path, workdir / "psfex_out")
         return render_psfex(psf_path, data["fits_path"][index], x, y)
 
-    renderers["piff"] = piff_grid
-    renderers["psfex"] = psfex_grid
+    if "piff" in methods:
+        renderers["piff"] = piff_grid
+    if "psfex" in methods:
+        renderers["psfex"] = psfex_grid
 
     frames = []
     for method, renderer in renderers.items():
@@ -163,7 +165,7 @@ def eval_file_group(args, file_name, exposures):
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 frame = evaluate_exposure(
-                    model, data, index, reserved_star_ids(manifest, exposure_id), tmp
+                    model, data, index, reserved_star_ids(manifest, exposure_id), tmp, args.methods
                 )
         except Exception:
             n_failed += 1
@@ -181,6 +183,12 @@ def main():
     parser.add_argument("--out", default="results/sim_truth.parquet")
     parser.add_argument("--max-exposures", type=int, default=None)
     parser.add_argument("--num-workers", type=int, default=8)
+    parser.add_argument(
+        "--methods",
+        nargs="+",
+        default=["implicit", "piff", "psfex"],
+        choices=["implicit", "piff", "psfex"],
+    )
     args = parser.parse_args()
 
     manifest = load_manifest(args.manifest)
