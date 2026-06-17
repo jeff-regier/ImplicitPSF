@@ -24,6 +24,7 @@ from implicitpsf.baselines.psfex_runner import fit_psfex, render_psfex
 from implicitpsf.datasets import load_exposure_file, make_batch, stable_seed
 from implicitpsf.evaluation.chi2 import reduced_chi2
 from implicitpsf.evaluation.moments import hsm_moments
+from implicitpsf.provenance import write_result
 from implicitpsf.splits import load_manifest, reserved_star_ids
 
 TYPE_CLEAN = 0
@@ -260,11 +261,9 @@ def main():
     if not results:
         raise RuntimeError("no exposures evaluated")
     table = pd.concat(results, ignore_index=True)
-    out_path = Path(args.out)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    table.to_parquet(out_path)
+    write_result(table, args.out, checkpoint=args.checkpoint, source="run_eval", purpose=args.out)
     print(f"wrote {len(table)} rows for {table['exposure_id'].nunique()} exposures")
-    print(f"({n_failed} exposures failed) -> {out_path}")
+    print(f"({n_failed} exposures failed) -> {args.out}")
 
 
 if __name__ == "__main__":

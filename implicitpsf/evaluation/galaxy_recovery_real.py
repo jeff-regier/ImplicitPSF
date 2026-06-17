@@ -35,6 +35,7 @@ from implicitpsf.evaluation.galaxy_fit import OVERSAMPLE, fit_galaxies
 from implicitpsf.evaluation.galaxy_recovery import lattice_kernel, sample_galaxies
 from implicitpsf.evaluation.moments import PIXEL_SCALE
 from implicitpsf.evaluation.run_eval import exposure_masks
+from implicitpsf.provenance import write_result
 from implicitpsf.render import render_at
 from implicitpsf.simulate import PATCH
 from implicitpsf.splits import load_manifest, reserved_star_ids
@@ -269,11 +270,13 @@ def main():
 
     frames = [frame for group in groups for frame in group]
     table = pd.concat(frames, ignore_index=True)
-    out = Path(args.out)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    table.to_parquet(out)
+    write_result(
+        table, args.out, checkpoint=args.checkpoint, source="galaxy_recovery_real", purpose=args.out
+    )
     n_exp = table["exposure_id"].nunique()
-    print(f"wrote {out}: {len(table)} rows, {n_exp} exposures, arms {sorted(table.arm.unique())}")
+    print(
+        f"wrote {args.out}: {len(table)} rows, {n_exp} exposures, arms {sorted(table.arm.unique())}"
+    )
 
 
 if __name__ == "__main__":

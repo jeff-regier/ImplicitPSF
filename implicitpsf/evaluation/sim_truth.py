@@ -25,6 +25,7 @@ from implicitpsf.baselines.psfex_runner import fit_psfex, render_psfex
 from implicitpsf.datasets import load_exposure_file, make_batch
 from implicitpsf.evaluation.moments import PIXEL_SCALE, hsm_moments
 from implicitpsf.evaluation.run_eval import exposure_masks
+from implicitpsf.provenance import write_result
 from implicitpsf.render import render_at
 from implicitpsf.simulate import COLOR_MEAN, HEIGHT, MOFFAT_BETA, PATCH, WIDTH, true_psf_params
 from implicitpsf.splits import load_manifest, reserved_star_ids
@@ -213,9 +214,7 @@ def main():
     if not results:
         raise RuntimeError("no exposures evaluated")
     table = pd.concat(results, ignore_index=True)
-    out_path = Path(args.out)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    table.to_parquet(out_path)
+    write_result(table, args.out, checkpoint=args.checkpoint, source="sim_truth", purpose=args.out)
     ok = (table["flag_model"] == 0) & (table["flag_true"] == 0)
     summary = (
         table[ok]
@@ -224,7 +223,7 @@ def main():
         .agg(["median", "std"])
     )
     print(summary)
-    print(f"wrote {len(table)} rows ({n_failed} failed) -> {out_path}")
+    print(f"wrote {len(table)} rows ({n_failed} failed) -> {args.out}")
 
 
 if __name__ == "__main__":

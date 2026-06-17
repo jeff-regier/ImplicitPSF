@@ -50,3 +50,7 @@ paper/*.blg
 paper/*.bbl
 paper/aastex701.cls
 paper/aasjournalv7.bst
+
+# Provenance run dirs are local scratch; results/INDEX.jsonl (committed) +
+# parquet-embedded provenance are the durable record.
+runs/

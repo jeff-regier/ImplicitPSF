@@ -50,6 +50,31 @@ uv run python -m implicitpsf.evaluation.sim_truth    # sim-only: truth at star-f
 - Loss = inverse-variance chi^2 with closed-form per-star amplitude (MSE = variance 1)
 - The model conditions on color (DR2 g-i; 0 = unknown) and log-flux (brighter-fatter)
 
+## Provenance (every result must trace to commit + config + run)
+
+Motivated by a real bug: a stale `rho_allband.parquet` from an old model was mistaken for
+the production model and written into the paper. Guard rails (`implicitpsf/provenance.py`):
+
+- **Run every compute job through the wrapper** instead of bare `nohup python -m ...`:
+  ```bash
+  uv run python -m implicitpsf.record --kind {train,eval,probe,figure} \
+      --purpose "psctx converged eval" -- python -m implicitpsf.evaluation.run_eval ...
+  ```
+  It mints `runs/<ts>_<kind>_<slug>/` (invocation.sh, provenance.json with git sha + diff
+  hash + uv.lock hash + host + `CUDA_VISIBLE_DEVICES`, run.log), exports
+  `IMPLICITPSF_RUN_DIR` to the child, and appends a run line to `results/INDEX.jsonl`.
+- **Checkpoints self-describe**: `save_checkpoint` embeds `provenance` (git sha/dirty,
+  argv, `data_manifest` + its sha256, created_at) beside `hyperparameters`.
+- **Result parquets self-describe**: evals call
+  `provenance.write_result(df, path, checkpoint=..., source=..., purpose=...)` (NOT
+  `df.to_parquet`), which stamps pyarrow table metadata (producing git sha, checkpoint
+  path + sha256, command, run_dir, created_at) and appends a `results/INDEX.jsonl` line.
+  Recover it with `provenance.read_result_provenance(path)`.
+- **`results/INDEX.jsonl` is the committed registry** (one JSON line per result and per
+  run); `runs/` is git-ignored local scratch. Before trusting/citing any parquet, check
+  its embedded `git_sha`/`checkpoint_sha256` matches the intended model — see
+  [[stale-results-parquet-trap]].
+
 ## Hard-won gotchas
 
 - psfex segfaults unless LDAC_IMHEAD bytes are space-padded with an `END` card

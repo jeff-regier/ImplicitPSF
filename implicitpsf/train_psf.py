@@ -19,6 +19,7 @@ from tqdm import tqdm
 
 from implicitpsf.datasets import BATCH_KEYS, load_exposure_file, make_batch, stable_seed
 from implicitpsf.implicit_psf import ImplicitPSF
+from implicitpsf.provenance import checkpoint_provenance
 from implicitpsf.splits import files_for_split, load_manifest
 
 QUEUE_TIMEOUT_SECONDS = 600
@@ -143,7 +144,7 @@ def make_scheduler(optimizer, max_epochs, warmup_epochs=1):
     return torch.optim.lr_scheduler.LambdaLR(optimizer, schedule)
 
 
-def save_checkpoint(model, optimizer, epoch, val_loss, out_dir):
+def save_checkpoint(model, optimizer, epoch, val_loss, out_dir, provenance):
     # overwrite a single rolling checkpoint; per-epoch files blow past the home quota
     path = Path(out_dir) / "last.pt"
     torch.save(
@@ -153,6 +154,7 @@ def save_checkpoint(model, optimizer, epoch, val_loss, out_dir):
             "model_state_dict": model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
             "hyperparameters": dict(model.hparams),
+            "provenance": provenance,
         },
         path,
     )
@@ -284,6 +286,7 @@ def main():
         csv.writer(handle).writerow(["epoch", "train_loss", "val_loss", "lr", "seconds"])
 
     ema = EMA(model, args.ema_decay) if args.ema_decay is not None else None
+    provenance = checkpoint_provenance(manifest=args.manifest)
     best_val = float("inf")
     epochs_since_best = 0
     for epoch in range(args.max_epochs):
@@ -325,7 +328,7 @@ def main():
         with open(log_path, "a", newline="", encoding="utf-8") as handle:
             csv.writer(handle).writerow([epoch, train_loss, val_loss, lr, round(seconds, 1)])
 
-        checkpoint_path = save_checkpoint(model, optimizer, epoch, val_loss, out_dir)
+        checkpoint_path = save_checkpoint(model, optimizer, epoch, val_loss, out_dir, provenance)
         if raw_state is not None:
             model.load_state_dict(raw_state)  # resume training from raw, not EMA, weights
         if val_loss < best_val:
