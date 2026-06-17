@@ -178,6 +178,7 @@ def parse_args():
     parser.add_argument("--decoder-film", action="store_true")
     parser.add_argument("--diagonal-coords", action="store_true")
     parser.add_argument("--polar-coords", action="store_true")
+    parser.add_argument("--n-freqs", type=int, default=8, help="decoder Fourier frequencies")
     parser.add_argument("--loss-mode", default="single", choices=["single", "blend"])
     parser.add_argument("--blend-radius", type=float, default=22.0)
     parser.add_argument("--blend-k-max", type=int, default=4)
@@ -262,6 +263,7 @@ def main():
         decoder_film=args.decoder_film,
         diagonal_coords=args.diagonal_coords,
         polar_coords=args.polar_coords,
+        n_freqs=args.n_freqs,
         loss_mode=args.loss_mode,
         blend_radius=args.blend_radius,
         blend_k_max=args.blend_k_max,
