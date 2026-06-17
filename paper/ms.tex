@@ -27,6 +27,10 @@ shear measurement. The standard approach fits an independent PSF model per expos
 single \emph{amortized} continuous PSF field: a multi-head attention network takes an
 exposure's stars as context (position, color, flux, and pixel cutouts) and predicts the
 PSF at any queried position and resolution, with no per-exposure fitting at test time.
+The network targets the \emph{pixel-convolved} (effective) PSF---the expected pixel
+values a point source would produce---rather than a sub-pixel surface-brightness profile,
+making the directly observable, identifiable quantity the regression target and the
+exact kernel needed to forward-model galaxies.
 On 3{,}301 frozen test exposures of Dark Energy Survey (DES) single-epoch imaging
 (CCD~31, $grizY$; 73{,}609 reserved stars), the model matches or exceeds \textsc{PIFF}
 and \textsc{PSFEx} on every metric: size-residual scatter $0.030$ versus $0.039/0.037$,
@@ -68,6 +72,27 @@ the PSF at \emph{star-free} positions, where galaxies are measured; predicting h
 stars is the training objective and the validation instrument. We train and evaluate on
 DES single-epoch data and benchmark against \textsc{PIFF} and \textsc{PSFEx} run by us
 under matched conditions.
+
+A second, more fundamental difference is the \emph{target} of the model. Traditional
+PSF models---including \textsc{PSFEx} (super-sampled pixels) and \textsc{PIFF} (a
+surface-brightness profile on the sky)---represent the PSF as a continuous function on
+$\mathbb{R}^2$ at finer-than-pixel resolution, which must then be convolved with an
+assumed pixel-response kernel to predict what a detector records. We instead model the
+\emph{effective} PSF \citep[ePSF;][]{AndersonKing2000}: the instrumental PSF already
+integrated over the pixel, i.e.\ the expected fraction of a point source's light falling
+in each pixel as a function of the source's sub-pixel position. The network maps a query
+position (and color, flux) directly to these expected pixel values, never representing
+the continuous PSF explicitly---the sense in which our PSF is \emph{implicit}. This
+target is more principled on two grounds. First, identifiability: from sampled data one
+cannot uniquely recover the sub-pixel surface brightness without extra assumptions,
+whereas the ePSF is exactly what the pixels constrain---the reason it underpins
+state-of-the-art point-source astrometry and photometry \citep{AndersonKing2000,
+Lauer1999, Liaudat2023}. Second, sufficiency: the ePSF as a function of source position
+is a sufficient statistic for forward-modeling \emph{any} source---a galaxy's expected
+pixel data is its surface brightness convolved with the ePSF, with no separate pixel
+step \citep{BernsteinJarvis2002}---so the ePSF is precisely the kernel a shear pipeline
+needs. The only residual is discretizing that convolution on a finite grid, which our
+ability to render at arbitrary oversampling controls directly.
 \begin{figure*}
 \centering
 \begin{tikzpicture}[
@@ -145,6 +170,18 @@ query attend to the context sources; a coordinate decoder then renders the PSF a
 query position and any oversampling factor, returning the pixel-convolved effective PSF
 used to convolve galaxy models. We use a polar (spin-2-aware) angular parametrization of
 the decoder and FiLM modulation of the decoder by the attended context features.
+
+\paragraph{Inferential target (effective PSF)} The decoder outputs the effective PSF
+\citep{AndersonKing2000}---the pixel-integrated point-source response---sampled at the
+query grid, optionally oversampled. Because the loss below compares predicted stamps to
+\emph{observed} star pixels, the model regresses the observable by construction: it
+learns $\mathbb{E}[\text{pixel value}\mid\text{point source at }(x,y)]$ directly, rather
+than fitting a sub-pixel profile and assuming a pixel kernel. This is also what makes the
+benchmark fair: we score all three methods on moments measured in pixel space (model
+stamp versus star stamp), so no method is privileged by its internal representation. The
+same pixel-convolved output is the kernel used to forward-model galaxies in
+\S\ref{sec:galrec}; oversampling the render reduces the discretization error of that
+convolution for compact sources.
 
 \paragraph{Loss} Training minimizes an inverse-variance $\chi^2$ between predicted and
 observed star cutouts, with the per-star amplitude solved in closed form. We introduce a
@@ -351,8 +388,11 @@ generalizes from simulation to data without trading away real-world performance.
 \section{Discussion} \label{sec:discussion}
 
 The amortized field trades a per-exposure fit for a single trained model. Benefits: no
-test-time fitting, robustness in star-sparse exposures, and conditioning on color
-(chromatic PSF) and flux (brighter--fatter). Caveats: (i)~unlike per-exposure fitters, the
+test-time fitting, robustness in star-sparse exposures, conditioning on color
+(chromatic PSF) and flux (brighter--fatter), and a directly forward-modelable output---we
+predict the pixel-convolved effective PSF, the identifiable quantity the data constrain
+and the exact kernel a galaxy model is convolved with (\S\ref{sec:intro}), so the PSF
+feeds a shear pipeline with no intervening pixel-deconvolution assumption. Caveats: (i)~unlike per-exposure fitters, the
 amortized model requires many exposures to learn the field (in simulation, ellipticity
 recovery is unstable below a few thousand exposures; real DES is well above this);
 (ii)~the simulation's idealized PSF (Moffat, low-order polynomial field) favors the
