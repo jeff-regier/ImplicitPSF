@@ -1,15 +1,12 @@
-"""Benchmark-standard PSF validation figures (matching PIFF, Jarvis+2021): spatial
-residual maps, residuals vs magnitude (brighter-fatter), residuals vs color (DCR),
-residual-ellipticity whiskers, and the size-magnitude stellar-locus star selection.
-All from the frozen real-data results; outputs vector PDFs to paper/figures/.
+"""Benchmark-standard PSF validation figures (matching PIFF, Jarvis+2021): rho-statistics,
+spatial residual maps, residuals vs magnitude (brighter-fatter), residuals vs color (DCR),
+and residual-ellipticity whiskers. All from the frozen real-data results; outputs vector
+PDFs to paper/figures/.
 """
-
-import glob
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import torch
 from scipy.stats import binned_statistic, binned_statistic_2d
 
 plt.rcParams.update(
@@ -18,7 +15,6 @@ plt.rcParams.update(
 
 FIGDIR = "paper/figures"
 HEADLINE = "results/real_test_v6_blend_allmethods.parquet"
-DATA_DIR = "/data/scratch/regier/sep_des_stars_v2"
 METHOD_LABEL = {"implicit": "This work", "piff": "PIFF", "psfex": "PSFEx"}
 METHOD_COLOR = {"implicit": "C3", "piff": "C0", "psfex": "C1"}
 
@@ -150,53 +146,6 @@ def fig_whisker_resid():
     plt.close(fig)
 
 
-def _second_moment_size(stamp):
-    s = stamp - np.median(stamp)
-    s = np.clip(s, 0, None)
-    tot = s.sum()
-    if tot <= 0:
-        return np.nan
-    p = stamp.shape[0]
-    yy, xx = np.mgrid[0:p, 0:p]
-    cx = (s * xx).sum() / tot
-    cy = (s * yy).sum() / tot
-    return (s * ((xx - cx) ** 2 + (yy - cy) ** 2)).sum() / tot
-
-
-def fig_size_mag():
-    """Size-magnitude stellar locus used for star selection (cf. PIFF Fig. 3)."""
-    files = sorted(glob.glob(f"{DATA_DIR}/*.pt"))[:1]
-    sizes, mags, kinds = [], [], []
-    for f in files:
-        data = torch.load(f, map_location="cpu", weights_only=False)
-        for i in range(min(20, data["cutouts"].shape[0])):
-            st = data["star_type"][i].numpy()
-            cut = data["cutouts"][i].numpy()
-            flux = data["flux"][i].numpy()
-            sel = np.argwhere(np.isin(st, [0, 2]) & (flux > 0)).ravel()[:120]
-            for j in sel:
-                t = _second_moment_size(cut[j])
-                if np.isfinite(t) and t < 60:
-                    sizes.append(t)
-                    mags.append(-2.5 * np.log10(flux[j]))
-                    kinds.append(st[j])
-    sizes, mags, kinds = np.array(sizes), np.array(mags), np.array(kinds)
-    fig, ax = plt.subplots(figsize=(3.6, 3.0))
-    ax.plot(
-        mags[kinds == 2], sizes[kinds == 2], ".", ms=2, alpha=0.3, color="gray", label="galaxies"
-    )
-    ax.plot(
-        mags[kinds == 0], sizes[kinds == 0], ".", ms=3, alpha=0.6, color="C3", label="clean stars"
-    )
-    ax.set_xlabel("instrumental magnitude")
-    ax.set_ylabel("size $T$ (px$^2$)")
-    ax.set_ylim(0, 60)
-    ax.legend(fontsize=8, frameon=False)
-    ax.set_title("Size-magnitude star selection", fontsize=9)
-    fig.savefig(f"{FIGDIR}/fig_size_mag.pdf")
-    plt.close(fig)
-
-
 RHO = "results/rho_test_v6_blend_recompute.parquet"
 RHO_LABEL = {
     "rho1": r"$\rho_1=\langle\delta e\,\delta e\rangle$",
@@ -245,7 +194,6 @@ def main():
         ("resid_vs_mag", fig_resid_vs_mag),
         ("resid_vs_color", fig_resid_vs_color),
         ("whisker_resid", fig_whisker_resid),
-        ("size_mag", fig_size_mag),
     ]:
         fn()
         print(f"wrote {FIGDIR}/fig_{name}.pdf")
