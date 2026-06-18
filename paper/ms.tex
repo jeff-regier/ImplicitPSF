@@ -466,9 +466,13 @@ core: rendered at a fiducial flux its second-moment size is accurate, but it car
 ${\sim}2\%$ less encircled energy in the central few pixels than the empirical PSF, which
 biases recovered galaxy sizes ${\sim}6\%$ low (\S\ref{sec:galrec}). We attribute this to
 spectral bias of the coordinate decoder---MLP decoders preferentially fit smooth
-functions and under-resolve sharp peaks---and expect sharper positional encodings (Fourier
-features) or a core-weighted loss to mitigate it; it is the main residual systematic to
-address before a shear analysis. A separate, milder effect appears only in the
+functions and under-resolve sharp peaks. We verify this is the cause and is tractable:
+widening the decoder's Fourier frequency basis nearly eliminates the core deficit
+(${\sim}2\%\to0.1\%$ encircled-energy residual at $r{=}2$\,px) and cuts the galaxy-size
+bias by ${\sim}30\%$ (to ${\sim}5\%$), at a small cost to reserved-star ellipticity
+scatter---so a clean fix that improves the core without that cost (a tuned frequency
+schedule, or sinusoidal-activation decoders) is a tractable refinement rather than an open
+question. It is the main residual systematic to address before a shear analysis. A separate, milder effect appears only in the
 reserved-star metric (Fig.~\ref{fig:residmag}): evaluated at each star's \emph{own} flux,
 $\delta T/T$ rises to ${\sim}{+}1.2\%$ at faint magnitudes, a spurious flux--size trend in
 the conditioning; because the inferential PSF is rendered at a fiducial flux, this does not
