@@ -38,8 +38,10 @@ and \textsc{PSFEx} on every metric: size-residual scatter $0.030$ versus $0.039/
 ellipticity errors $|\delta e_1|,|\delta e_2|=0.015/0.015$ versus $0.017/0.016$
 (\textsc{PIFF}), and shape correlations $0.65/0.61$ versus $0.61/0.58$ (\textsc{PIFF}),
 at $\chi^2/{\rm dof}=1.04$. In a star-anchored galaxy injection--recovery test on real
-data, our PSF recovers galaxy \emph{ellipticity} far better than \textsc{PIFF}
-($\Delta e_1=+0.004$ versus $-0.138$), the weak-lensing-critical quantity. Color
+data, our PSF recovers galaxy \emph{ellipticity} without coherent bias
+($|\Delta e_1|\lesssim0.01$, on par with \textsc{PIFF})---the weak-lensing-critical
+quantity---at the cost of a ${\sim}8\%$ size deficit we trace to the decoder's sharp-core
+representation and address directly. Color
 conditioning removes a chromatic PSF-size systematic that the baselines retain
 ($+0.004$/mag versus $\sim\!-0.06$/mag residual slope). The model is flat in the number
 of available fit stars where \textsc{PIFF} degrades sharply ($\chi^2\simeq1.1$ versus
@@ -361,35 +363,42 @@ shape--size coupling) is modestly larger (\S\ref{sec:rho}).\label{fig:rho}}
 We test the inferential goal directly. We inject \textsc{galsim} galaxies, convolved with
 a strictly isolated reserved star's empirical PSF, at that star's position; each method
 predicts the PSF there from the \emph{other} stars and recovers the galaxy. The truth arm
-(the anchor's own image) recovers near-zero bias, validating the protocol. On 113 $r$-band
-exposures and 522 anchors (Table~\ref{tab:galrec}), our PSF recovers galaxy
-\emph{ellipticity} essentially without bias, whereas \textsc{PIFF}'s PSF-ellipticity error
-induces a large shape bias ($\Delta e_1=-0.14$). \textsc{PIFF} recovers size slightly
-better; our recovered galaxy sizes are ${\sim}6\%$ low. This is \emph{not} a second-moment
-size error---rendered at a fiducial flux, the model's PSF size is accurate at both star
-and star-free positions (within $1\%$)---but a profile-shape effect: the model's PSF is
+(the anchor's own image) recovers near-zero ellipticity bias, validating the protocol.
+On the $r$-band test exposures (Table~\ref{tab:galrec}), all three methods recover galaxy
+\emph{ellipticity} with low bias ($|\Delta e_1|\lesssim0.01$): the pixel-convolved
+effective PSF carries the PSF ellipticity faithfully into the forward model, so no method
+imprints a coherent shape error on the recovered galaxies---the weak-lensing-critical
+property, which our model satisfies on par with the per-exposure baselines. The methods
+separate instead on recovered \emph{size}: \textsc{PIFF} is slightly large ($+3.4\%$),
+while our recovered sizes are ${\sim}8\%$ small. This is \emph{not} a second-moment size
+error---rendered at a fiducial flux, the model's PSF size is accurate at both star and
+star-free positions (within $1\%$)---but a profile-shape effect: the model's PSF is
 slightly \emph{under-concentrated}, carrying ${\sim}2\%$ less encircled energy in the
 central few pixels than the empirical PSF, which biases recovered galaxy sizes low. We
 attribute this to spectral bias of the coordinate decoder, which under-resolves the sharp
-PSF core (\S\ref{sec:discussion}). For weak lensing, the ellipticity result is the
-consequential one.
+PSF core, and address it in \S\ref{sec:discussion}. The size deficit is the main residual
+systematic we target; recovered ellipticity, the consequential quantity for shear, is
+unbiased for our model.
 \begin{figure}
 \centering
 \includegraphics[width=\columnwidth]{figures/fig_galrec.pdf}
-\caption{Galaxy ellipticity recovery on real data (star-anchored injection). PIFF's PSF-ellipticity error biases recovered galaxy $e_1$ by $-0.14$; ours is unbiased.\label{fig:galrec}}
+\caption{Galaxy ellipticity recovery on real data (star-anchored injection). All methods
+recover galaxy $e_1$ with low bias ($|\Delta e_1|\lesssim0.01$); they differ in recovered
+\emph{size}, not ellipticity (\S\ref{sec:galrec}).\label{fig:galrec}}
 \end{figure}
 
 
 
 \begin{deluxetable}{lccc}
-\tablecaption{Star-anchored galaxy injection--recovery (113 $r$-band exposures, 522
-anchors). The truth arm validates the protocol.\label{tab:galrec}}
+\tablecaption{Star-anchored galaxy injection--recovery ($r$-band test exposures). The
+truth arm validates the protocol. All methods recover ellipticity with low bias; they
+separate on recovered size.\label{tab:galrec}}
 \tablehead{\colhead{Arm} & \colhead{Size bias} & \colhead{$\Delta e_1$} &
 \colhead{$\Delta e_2$}}
 \startdata
-Truth (validation) & $-1.5\%$ & $-0.002$ & ${\sim}0$ \\
-\textbf{This work}  & $-7.6\%$ & $\mathbf{+0.004}$ & $-0.002$ \\
-\textsc{PIFF}       & $-1.0\%$ & $\mathbf{-0.138}$ & $-0.001$ \\
+Truth (validation) & $-1.2\%$ & $+0.008$ & $-0.004$ \\
+\textbf{This work}  & $-7.8\%$ & $-0.005$ & $+0.002$ \\
+\textsc{PIFF}       & $+3.4\%$ & $+0.004$ & $+0.004$ \\
 \enddata
 \end{deluxetable}
 
@@ -491,7 +500,7 @@ per-exposure baselines, so absolute-accuracy comparisons rest on real data; and
 point sources, which we adopt. (iv)~The model slightly \emph{under-concentrates} the PSF
 core: rendered at a fiducial flux its second-moment size is accurate, but it carries
 ${\sim}2\%$ less encircled energy in the central few pixels than the empirical PSF, which
-biases recovered galaxy sizes ${\sim}6\%$ low (\S\ref{sec:galrec}). We attribute this to
+biases recovered galaxy sizes ${\sim}8\%$ low (\S\ref{sec:galrec}). We attribute this to
 spectral bias of the coordinate decoder---MLP decoders preferentially fit smooth
 functions and under-resolve sharp peaks. We verify this is the cause and is tractable:
 widening the decoder's Fourier frequency basis nearly eliminates the core deficit
@@ -509,9 +518,9 @@ propagate to galaxy measurement.
 
 A single attention-based continuous PSF field, trained across DES single-epoch exposures
 and applied with no per-exposure fitting, matches or exceeds \textsc{PIFF} and
-\textsc{PSFEx} on real reserved stars and recovers galaxy ellipticity better than
-\textsc{PIFF} on a star-anchored injection test, while additionally correcting a chromatic
-systematic and remaining robust in star-sparse exposures. Controlled simulations motivate
+\textsc{PSFEx} on real reserved stars and recovers galaxy ellipticity without coherent
+bias---on par with \textsc{PIFF}---on a star-anchored injection test, while additionally
+correcting a chromatic systematic and remaining robust in star-sparse exposures. Controlled simulations motivate
 two training choices---a blend forward-model loss and point-source-only attention
 context---the latter from a clean diagnosis of a spin-2 representation failure triggered
 by galaxy detections in context.
