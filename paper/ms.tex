@@ -40,8 +40,9 @@ ellipticity errors $|\delta e_1|,|\delta e_2|=0.015/0.015$ versus $0.017/0.016$
 at $\chi^2/{\rm dof}=1.04$. In a star-anchored galaxy injection--recovery test on real
 data, our PSF recovers galaxy \emph{ellipticity} without coherent bias
 ($|\Delta e_1|\lesssim0.01$, on par with \textsc{PIFF})---the weak-lensing-critical
-quantity---at the cost of a ${\sim}8\%$ size deficit we trace to the decoder's sharp-core
-representation and address directly. Color
+quantity---while recovered galaxy \emph{sizes} run ${\sim}8\%$ small. We trace this to the
+coordinate decoder under-resolving the sharp PSF core and reduce it with a sharper
+frequency encoding. Color
 conditioning removes a chromatic PSF-size systematic that the baselines retain
 ($+0.004$/mag versus $\sim\!-0.06$/mag residual slope). The model is flat in the number
 of available fit stars where \textsc{PIFF} degrades sharply ($\chi^2\simeq1.1$ versus
@@ -376,9 +377,9 @@ star-free positions (within $1\%$)---but a profile-shape effect: the model's PSF
 slightly \emph{under-concentrated}, carrying ${\sim}2\%$ less encircled energy in the
 central few pixels than the empirical PSF, which biases recovered galaxy sizes low. We
 attribute this to spectral bias of the coordinate decoder, which under-resolves the sharp
-PSF core, and address it in \S\ref{sec:discussion}. The size deficit is the main residual
-systematic we target; recovered ellipticity, the consequential quantity for shear, is
-unbiased for our model.
+PSF core; \S\ref{sec:discussion} diagnoses this and shows it shrinks with a sharper
+coordinate encoding. The size deficit is the main residual systematic of our model;
+recovered ellipticity, the consequential quantity for shear, is unbiased.
 \begin{figure}
 \centering
 \includegraphics[width=\columnwidth]{figures/fig_galrec.pdf}
