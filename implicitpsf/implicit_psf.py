@@ -72,6 +72,7 @@ class PSFDecoder(nn.Module):
         siren=False,
         siren_omega=30.0,
         rff_sigma=None,
+        analytic_core=False,
     ):
         super().__init__()
         self.patch_size = patch_size
@@ -89,6 +90,14 @@ class PSFDecoder(nn.Module):
             # knob sigma sets the spectral content directly, avoiding both core
             # under-resolution (small n_freqs) and aliasing (large dyadic max-frequency).
             self.register_buffer("rff_freqs", torch.randn(n_freqs) * rff_sigma)
+        self.analytic_core = analytic_core
+        if analytic_core:
+            if not use_features:
+                raise ValueError("analytic_core requires use_features (core params from context)")
+            # Gaussian core (log-width, log-amplitude) predicted from the attended context,
+            # added to the decoder output: the sharp central cusp the MLP under-resolves is
+            # then correct by construction and the network models only the broader residual.
+            self.core_head = nn.Linear(feature_dim, 2)
 
         if polar_coords:
             # radial Fourier features times angular harmonics: ellipticity is spin-2,
@@ -193,8 +202,21 @@ class PSFDecoder(nn.Module):
                 pre = layer(hidden)
                 activated = torch.sin(self.siren_omega * pre) if self.siren else torch.relu(pre)
                 hidden = activated * (1.0 + scale) + shift
-            return self.film_head(hidden).squeeze(-1)
-        return self.pixel_mlp(hidden).squeeze(-1)
+            base = self.film_head(hidden).squeeze(-1)
+        else:
+            base = self.pixel_mlp(hidden).squeeze(-1)
+        if self.analytic_core:
+            return base + self._gaussian_core(offsets, features)
+        return base
+
+    def _gaussian_core(self, offsets, features):
+        """Context-predicted Gaussian core intensity I(r) = amp * exp(-r^2 / 2 sigma^2),
+        with sigma (pixels) clamped to a compact range so it captures only the sharp peak."""
+        log_sigma = self.core_head(features)[..., 0:1]  # (b, s, 1)
+        log_amp = self.core_head(features)[..., 1:2]
+        sigma = log_sigma.exp().clamp(0.3, 3.0)
+        r2 = (offsets**2).sum(dim=-1)  # (b, s, n)
+        return log_amp.exp() * torch.exp(-0.5 * r2 / sigma**2)
 
 
 class ImplicitPSF(pl.LightningModule):
@@ -225,6 +247,7 @@ class ImplicitPSF(pl.LightningModule):
         siren=False,
         siren_omega=30.0,
         rff_sigma=None,
+        analytic_core=False,
         loss_mode="single",
         blend_radius=22.0,
         blend_k_max=4,
@@ -301,6 +324,7 @@ class ImplicitPSF(pl.LightningModule):
             siren=siren,
             siren_omega=siren_omega,
             rff_sigma=rff_sigma,
+            analytic_core=analytic_core,
         )
 
     def _sinusoidal_position_encoding(self, positions):
