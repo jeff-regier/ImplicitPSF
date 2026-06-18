@@ -9,6 +9,7 @@ import argparse
 import multiprocessing as mp
 import os
 import subprocess
+import time
 import traceback
 import warnings
 from pathlib import Path
@@ -17,7 +18,6 @@ import numpy as np
 import pandas as pd
 import sep
 import torch
-from astromatch.preprocessing.utils import retry_with_backoff
 from astropy.io import fits
 from astropy.utils.exceptions import AstropyWarning
 from astropy.wcs import WCS
@@ -41,6 +41,22 @@ CONFIG = {
     "catalog_grid_deg": 0.1,  # cone centers snapped to this grid for caching
     "catalog_radius_deg": 0.35,  # covers a CCD from any pointing within a grid cell
 }
+
+def retry_with_backoff(fn, max_retries=5, error_prefix=""):
+    """Call fn() with exponential backoff on transient failures; re-raise after the
+    last attempt. Used for the Data Lab query service, which intermittently times out.
+    Reimplemented locally so the codebase does not depend on the astromatch package.
+    """
+    for attempt in range(max_retries):
+        try:
+            return fn()
+        except Exception as exc:
+            if attempt == max_retries - 1:
+                raise
+            wait_time = 2**attempt
+            print(f"  {error_prefix}({exc}), retrying in {wait_time}s...")
+            time.sleep(wait_time)
+
 
 # DESDM finalcut MSK bits
 BPM, SATURATE, INTERP, BADAMP, CRAY, STAR = 1, 2, 4, 8, 16, 32
