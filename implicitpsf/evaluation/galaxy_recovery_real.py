@@ -28,7 +28,7 @@ import torch
 
 from implicitpsf.baselines.catalogs import write_piff_catalog
 from implicitpsf.baselines.implicit_runner import load_model
-from implicitpsf.baselines.piff_runner import fit_piff
+from implicitpsf.baselines.piff_runner import fit_piff, render_piff
 from implicitpsf.blend import chebyshev_distances, sample_grid
 from implicitpsf.datasets import load_exposure_file, make_batch, stable_seed
 from implicitpsf.evaluation.galaxy_fit import OVERSAMPLE, fit_galaxies
@@ -117,11 +117,17 @@ def implicit_kernels(model, data, index, fit_mask, x, y):
 
 
 def piff_kernels(psf, x, y, grid):
+    """PIFF kernels in the data pixel frame, resampled on the fine lattice exactly as the
+    empirical truth arm. We draw each model WCS-aware (``render_piff``, identical to the
+    reserved-star path) and wrap the pixel-frame stamp as an InterpolatedImage, instead of
+    sampling ``psf.get_profile()`` on a bare pixel lattice: get_profile returns the PSF in
+    PIFF's sky frame, which the DECam WCS transposes relative to the pixel axes, corrupting
+    e1 only (e2 invariant) and biasing recovered galaxy ellipticity by ~-0.14."""
+    stamps = render_piff(psf, x, y, patch_size=PATCH)  # (n, PATCH, PATCH), WCS applied
     kernels = []
-    for x0, y0 in zip(x, y, strict=True):
-        profile, method = psf.get_profile(x=round(float(x0)) + 1.0, y=round(float(y0)) + 1.0)
-        if method == "auto":
-            profile = galsim.Convolve(profile, galsim.Pixel(PIXEL_SCALE))
+    for stamp in stamps:
+        image = galsim.Image(np.ascontiguousarray(stamp), scale=PIXEL_SCALE)
+        profile = galsim.InterpolatedImage(image, x_interpolant="lanczos15", normalization="flux")
         kernels.append(lattice_kernel(profile, grid))
     return np.stack(kernels)
 
