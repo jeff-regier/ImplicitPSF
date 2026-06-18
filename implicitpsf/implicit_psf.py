@@ -208,6 +208,7 @@ class ImplicitPSF(pl.LightningModule):
         polar_coords=False,
         n_freqs=8,
         siren=False,
+        siren_omega=30.0,
         loss_mode="single",
         blend_radius=22.0,
         blend_k_max=4,
@@ -282,6 +283,7 @@ class ImplicitPSF(pl.LightningModule):
             diagonal_coords=diagonal_coords,
             polar_coords=polar_coords,
             siren=siren,
+            siren_omega=siren_omega,
         )
 
     def _sinusoidal_position_encoding(self, positions):
