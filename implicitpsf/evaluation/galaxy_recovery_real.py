@@ -265,8 +265,13 @@ def main():
         by_file.setdefault(info["file"], []).append((name, info["index"]))
 
     tasks = [(args, file_name, exposures) for file_name, exposures in sorted(by_file.items())]
-    with mp.get_context("spawn").Pool(args.num_workers) as pool:
-        groups = pool.starmap(eval_file_group, tasks)
+    if args.num_workers <= 1:
+        groups = [eval_file_group(*task) for task in tasks]  # serial: no pool, always works
+    else:
+        # fork pool, as in run_eval/sim_truth (a 'spawn' pool re-imports this module per
+        # worker, which was both slow and fragile to third-party import behavior)
+        with mp.Pool(args.num_workers) as pool:
+            groups = pool.starmap(eval_file_group, tasks)
 
     frames = [frame for group in groups for frame in group]
     table = pd.concat(frames, ignore_index=True)
