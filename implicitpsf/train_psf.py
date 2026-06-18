@@ -179,6 +179,7 @@ def parse_args():
     parser.add_argument("--diagonal-coords", action="store_true")
     parser.add_argument("--polar-coords", action="store_true")
     parser.add_argument("--n-freqs", type=int, default=8, help="decoder Fourier frequencies")
+    parser.add_argument("--siren", action="store_true", help="SIREN (sin) decoder activations")
     parser.add_argument("--loss-mode", default="single", choices=["single", "blend"])
     parser.add_argument("--blend-radius", type=float, default=22.0)
     parser.add_argument("--blend-k-max", type=int, default=4)
@@ -264,6 +265,7 @@ def main():
         diagonal_coords=args.diagonal_coords,
         polar_coords=args.polar_coords,
         n_freqs=args.n_freqs,
+        siren=args.siren,
         loss_mode=args.loss_mode,
         blend_radius=args.blend_radius,
         blend_k_max=args.blend_k_max,

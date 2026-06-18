@@ -29,6 +29,26 @@ def stamp_offsets(positions, patch_size, oversample=1):
     return grid - subpixel.unsqueeze(2)
 
 
+class Sin(nn.Module):
+    """SIREN sinusoidal activation sin(omega_0 * x) (Sitzmann et al. 2020)."""
+
+    def __init__(self, omega_0):
+        super().__init__()
+        self.omega_0 = omega_0
+
+    def forward(self, x):
+        return torch.sin(self.omega_0 * x)
+
+
+def siren_init_(linear, in_features, omega_0, first):
+    """Sitzmann SIREN weight/bias init for a Linear feeding a Sin activation."""
+    bound = 1.0 / in_features if first else (6.0 / in_features) ** 0.5 / omega_0
+    with torch.no_grad():
+        linear.weight.uniform_(-bound, bound)
+        if linear.bias is not None:
+            linear.bias.uniform_(-bound, bound)
+
+
 class PSFDecoder(nn.Module):
     """Implicit PSF decoder: intensity at continuous offsets from a star center.
 
@@ -49,6 +69,8 @@ class PSFDecoder(nn.Module):
         film=False,
         diagonal_coords=False,
         polar_coords=False,
+        siren=False,
+        siren_omega=30.0,
     ):
         super().__init__()
         self.patch_size = patch_size
@@ -57,6 +79,8 @@ class PSFDecoder(nn.Module):
         self.film = film
         self.diagonal_coords = diagonal_coords
         self.polar_coords = polar_coords
+        self.siren = siren
+        self.siren_omega = siren_omega
 
         if polar_coords:
             # radial Fourier features times angular harmonics: ellipticity is spin-2,
@@ -69,11 +93,15 @@ class PSFDecoder(nn.Module):
             # elongation) learnable but starve e2, which needs u*v cross-terms
             n_axes = 4 if diagonal_coords else 2
             coord_dim = 2 * n_axes * n_freqs
+        activation = Sin(siren_omega) if siren else nn.ReLU(inplace=True)
         self.coord_embedding = nn.Sequential(
             nn.Linear(coord_dim, decoder_dim),
-            nn.ReLU(inplace=True),
+            activation,
             nn.Linear(decoder_dim, decoder_dim),
         )
+        if siren:  # SIREN init: first layer spreads input freqs, hidden keeps sin in range
+            siren_init_(self.coord_embedding[0], coord_dim, siren_omega, first=True)
+            siren_init_(self.coord_embedding[2], decoder_dim, siren_omega, first=False)
         if use_features:
             self.feature_projection = nn.Linear(feature_dim, decoder_dim)
 
@@ -83,15 +111,22 @@ class PSFDecoder(nn.Module):
                 nn.Linear(feature_dim, 2 * decoder_dim) for _ in range(3)
             )
             self.film_head = nn.Sequential(nn.Linear(decoder_dim, 1), nn.Softplus())
+            if siren:
+                for layer in self.film_hidden:
+                    siren_init_(layer, decoder_dim, siren_omega, first=False)
         else:
+            inner = Sin(siren_omega) if siren else nn.ReLU(inplace=True)
             self.pixel_mlp = nn.Sequential(
                 nn.Linear(decoder_dim, decoder_dim),
-                nn.ReLU(inplace=True),
+                inner,
                 nn.Linear(decoder_dim, decoder_dim),
-                nn.ReLU(inplace=True),
+                Sin(siren_omega) if siren else nn.ReLU(inplace=True),
                 nn.Linear(decoder_dim, 1),
                 nn.Softplus(),  # strictly positive intensity
             )
+            if siren:
+                siren_init_(self.pixel_mlp[0], decoder_dim, siren_omega, first=False)
+                siren_init_(self.pixel_mlp[2], decoder_dim, siren_omega, first=False)
 
     def _fourier_features(self, offsets):
         normalized = offsets / (self.patch_size // 2)
@@ -140,7 +175,9 @@ class PSFDecoder(nn.Module):
         if self.film and self.use_features:
             for layer, generator in zip(self.film_hidden, self.film_generators, strict=True):
                 scale, shift = generator(features).unsqueeze(2).chunk(2, dim=-1)
-                hidden = torch.relu(layer(hidden)) * (1.0 + scale) + shift
+                pre = layer(hidden)
+                activated = torch.sin(self.siren_omega * pre) if self.siren else torch.relu(pre)
+                hidden = activated * (1.0 + scale) + shift
             return self.film_head(hidden).squeeze(-1)
         return self.pixel_mlp(hidden).squeeze(-1)
 
@@ -170,6 +207,7 @@ class ImplicitPSF(pl.LightningModule):
         diagonal_coords=False,
         polar_coords=False,
         n_freqs=8,
+        siren=False,
         loss_mode="single",
         blend_radius=22.0,
         blend_k_max=4,
@@ -243,6 +281,7 @@ class ImplicitPSF(pl.LightningModule):
             film=decoder_film,
             diagonal_coords=diagonal_coords,
             polar_coords=polar_coords,
+            siren=siren,
         )
 
     def _sinusoidal_position_encoding(self, positions):
