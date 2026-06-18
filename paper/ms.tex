@@ -446,7 +446,30 @@ generalizes from simulation to data without trading away real-world performance.
 \caption{Galaxy detections in the attention context corrupt the recovered PSF ellipticity. Left: with galaxies in context, model $e_1$ collapses to a constant (corr$=-0.04$). Middle: restricting the context to point sources recovers it (corr$=0.98$). Right: shape correlations across configurations---point-source context and galaxy-free both recover \emph{both} components; a coordinate change (diagonal) does not.\label{fig:galcontext}}
 \end{figure*}
 
+\paragraph{Seed regularization: EMA versus ensembling} Amortized estimators carry
+seed-to-seed prediction noise. On the star-free truth grid we compare a single model,
+an exponential moving average (EMA) of one model's weights, and a 4-seed deep ensemble
+(averaging predicted stamps), each over matched 120-epoch runs (Table~\ref{tab:ema}).
+EMA gives a small, consistent gain ($T$-scatter $-5\%$, ellipticity $\lesssim2\%$); the
+ensemble is much larger ($-12\%$ size, $-24\%$ ellipticity). EMA is therefore \emph{not}
+a substitute for ensembling---it captures only a fraction of the benefit. The per-seed
+aggregate scatter is itself small (the model is seed-stable), but the per-position
+predictions are diverse, which only ensembling exploits. On real reserved stars the
+ensemble improves the metrics by only ${\sim}1\%$: that residual is measurement-noise- and
+blend-limited (corr${\sim}0.66$, not the truth-grid $0.99$), so it masks the model-error
+reduction that ensembling delivers at the star-free positions where galaxies are measured.
 
+\begin{deluxetable}{lccc}
+\tablecaption{Truth-grid PSF recovery (4 matched 120-epoch seeds): seed-noise scatter for
+a single model, EMA, and a 4-seed ensemble.\label{tab:ema}}
+\tablehead{\colhead{} & \colhead{$\sigma(\delta e_1)$} & \colhead{$\sigma(\delta e_2)$} &
+\colhead{$\sigma(\delta T/T)$}}
+\startdata
+single model     & 0.0094 & 0.0099 & 0.0175 \\
+EMA ($1\times$)  & 0.0092 & 0.0096 & 0.0167 \\
+ensemble ($4\times$) & \textbf{0.0073} & \textbf{0.0075} & \textbf{0.0154} \\
+\enddata
+\end{deluxetable}
 
 \section{Discussion} \label{sec:discussion}
 
