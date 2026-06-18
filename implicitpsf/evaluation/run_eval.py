@@ -40,12 +40,25 @@ def exposure_masks(data, index, reserved_ids):
     return clean, reserved
 
 
-def piff_stamps(data, index, fit_mask, reserved_mask, workdir):
+def adaptive_piff_order(n_fit):
+    """Highest PIFF interpolation order whose 2D-polynomial coefficient count is oversampled
+    at least 3x by the available fit stars. A 2D polynomial of order p has (p+1)(p+2)/2
+    coefficients (6 at order 2), so a fixed order=2 is underdetermined at small k -- e.g.
+    k=5 < 6 coefficients -- which makes the sample-efficiency comparison unfair to PIFF.
+    Only the small-k sweep is affected; the full eval (hundreds of stars) stays at order 2."""
+    for order in (2, 1, 0):
+        n_coeff = (order + 1) * (order + 2) // 2
+        if n_fit >= 3 * n_coeff:
+            return order
+    return 0
+
+
+def piff_stamps(data, index, fit_mask, reserved_mask, workdir, order=2):
     x = data["x_pixel"][index].numpy()
     y = data["y_pixel"][index].numpy()
     cat_path = workdir / "piff_cat.fits"
     write_piff_catalog(x[fit_mask], y[fit_mask], data["flux"][index].numpy()[fit_mask], cat_path)
-    psf = fit_piff(data["fits_path"][index], cat_path, workdir / "model.piff")
+    psf = fit_piff(data["fits_path"][index], cat_path, workdir / "model.piff", order=order)
     return render_piff(psf, x[reserved_mask], y[reserved_mask])
 
 
@@ -157,9 +170,10 @@ def evaluate_exposure(
         context_mask = fit_mask
 
     base = star_rows(data, index, reserved)
+    piff_order = adaptive_piff_order(int(fit_mask.sum()))
     renderers = {
         "implicit": lambda: implicit_stamps(model, data, index, reserved, zero_color, context_mask),
-        "piff": lambda: piff_stamps(data, index, fit_mask, reserved, workdir),
+        "piff": lambda: piff_stamps(data, index, fit_mask, reserved, workdir, piff_order),
         "psfex": lambda: psfex_stamps(data, index, fit_mask, reserved, workdir),
     }
     frames = []
