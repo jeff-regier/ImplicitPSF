@@ -90,7 +90,11 @@ def fine_sersic_samples(
     y_pos = s * (dy + half) + (s - 1) / 2.0
 
     profile = _sersic_cell_averages(x_pos, y_pos, sersic_n, sersic_re * s, eta1, eta2, fine, sub)
-    flux_norm = sersic_analytic_flux(sersic_n, sersic_re * s, torch.zeros_like(dx))
+    # astromatch's sersic_analytic_flux now takes (n, re, axis_ratio, fourier_a1,
+    # fourier_phi1); we normalize a plain round Sersic (a1=0), and the per-galaxy fit
+    # amplitude absorbs the overall flux scale, so axis_ratio=1 is exact for re/e recovery.
+    zeros = torch.zeros_like(dx)
+    flux_norm = sersic_analytic_flux(sersic_n, sersic_re * s, torch.ones_like(dx), zeros, zeros)
     return profile / flux_norm.reshape(-1, 1, 1)
 
 
