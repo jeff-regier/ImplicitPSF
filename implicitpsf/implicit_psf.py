@@ -71,6 +71,7 @@ class PSFDecoder(nn.Module):
         polar_coords=False,
         siren=False,
         siren_omega=30.0,
+        rff_sigma=None,
     ):
         super().__init__()
         self.patch_size = patch_size
@@ -81,6 +82,13 @@ class PSFDecoder(nn.Module):
         self.polar_coords = polar_coords
         self.siren = siren
         self.siren_omega = siren_omega
+        self.rff_sigma = rff_sigma
+        if rff_sigma is not None:
+            # tuned-sigma random Fourier features (Tancik et al. 2020): Gaussian radial
+            # frequencies B ~ N(0, sigma^2) replace the fixed dyadic ladder. One bandwidth
+            # knob sigma sets the spectral content directly, avoiding both core
+            # under-resolution (small n_freqs) and aliasing (large dyadic max-frequency).
+            self.register_buffer("rff_freqs", torch.randn(n_freqs) * rff_sigma)
 
         if polar_coords:
             # radial Fourier features times angular harmonics: ellipticity is spin-2,
@@ -128,13 +136,20 @@ class PSFDecoder(nn.Module):
                 siren_init_(self.pixel_mlp[0], decoder_dim, siren_omega, first=False)
                 siren_init_(self.pixel_mlp[2], decoder_dim, siren_omega, first=False)
 
+    def _radial_freqs(self, device, dtype):
+        """Frequency vector for the coordinate encoding: a fixed Gaussian RFF buffer when
+        rff_sigma is set, else the dyadic ladder 2^k."""
+        if self.rff_sigma is not None:
+            return self.rff_freqs.to(device=device, dtype=dtype)
+        return 2.0 ** torch.arange(self.n_freqs, device=device, dtype=dtype)
+
     def _fourier_features(self, offsets):
         normalized = offsets / (self.patch_size // 2)
         if self.polar_coords:
             u, v = normalized[..., 0], normalized[..., 1]
             radius = torch.sqrt(u * u + v * v + 1e-12)
             theta = torch.atan2(v, u)
-            freqs = 2.0 ** torch.arange(self.n_freqs, device=offsets.device, dtype=offsets.dtype)
+            freqs = self._radial_freqs(offsets.device, offsets.dtype)
             radial = radius.unsqueeze(-1) * (torch.pi * freqs)
             radial = torch.cat([torch.sin(radial), torch.cos(radial)], dim=-1)
             harmonics = torch.stack(
@@ -153,7 +168,7 @@ class PSFDecoder(nn.Module):
             u, v = normalized[..., 0], normalized[..., 1]
             rotated = torch.stack([(u + v), (u - v)], dim=-1) / math.sqrt(2.0)
             normalized = torch.cat([normalized, rotated], dim=-1)
-        freqs = 2.0 ** torch.arange(self.n_freqs, device=offsets.device, dtype=offsets.dtype)
+        freqs = self._radial_freqs(offsets.device, offsets.dtype)
         angles = normalized.unsqueeze(-1) * (torch.pi * freqs)
         angles = rearrange(angles, "b s n c f -> b s n (c f)")
         return torch.cat([torch.sin(angles), torch.cos(angles)], dim=-1)
@@ -209,6 +224,7 @@ class ImplicitPSF(pl.LightningModule):
         n_freqs=8,
         siren=False,
         siren_omega=30.0,
+        rff_sigma=None,
         loss_mode="single",
         blend_radius=22.0,
         blend_k_max=4,
@@ -284,6 +300,7 @@ class ImplicitPSF(pl.LightningModule):
             polar_coords=polar_coords,
             siren=siren,
             siren_omega=siren_omega,
+            rff_sigma=rff_sigma,
         )
 
     def _sinusoidal_position_encoding(self, positions):
