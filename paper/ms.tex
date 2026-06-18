@@ -166,7 +166,7 @@ factor.\label{fig:arch}}
 
 \paragraph{Architecture} Each detected source is encoded from its pixel cutout (a learned
 image encoder applied to the scale-normalized stamp), its sky position (sinusoidal
-encoding), and scalar color and $\log$-flux. A multi-head self-attention block \\citep{Vaswani2017} lets every
+encoding), and scalar color and $\log$-flux. A multi-head self-attention block \citep{Vaswani2017} lets every
 query attend to the context sources; a coordinate decoder then renders the PSF at the
 query position and any oversampling factor, returning the pixel-convolved effective PSF
 used to convolve galaxy models. We use a polar (spin-2-aware) angular parametrization of
@@ -194,9 +194,10 @@ convolution for compact sources.
 observed star cutouts, with the per-star amplitude solved in closed form. Star pixels are
 noisy realizations whose conditional mean is the effective PSF; a squared-error objective
 is minimized by the conditional expectation $\mathbb{E}[\,\text{pixel}\mid\text{source,
-context}\,]$, so minimizing it estimates exactly that quantity---the identifiable
-effective PSF---consistently. The network has no degrees of freedom that the data cannot
-constrain, in contrast to a sub-pixel surface-brightness model. We introduce a
+context}\,]$, so with enough capacity and data the objective is minimized by that
+quantity---the identifiable effective PSF. The network thus targets only what the pixels
+constrain, rather than a finer-than-pixel profile the sampled data do not determine. We
+introduce a
 \emph{blend forward-model} loss: rather than treat each clean star as isolated, we model
 its cutout as a generalized-least-squares sum of the target plus its detected neighbors,
 all rendered by the same decoder (\S\ref{sec:sim}). Detected galaxies near a target are
@@ -285,11 +286,16 @@ the validation native to effective-PSF work \citep{AndersonKing2000}. Two checks
 follow. First, the inverse-variance $\chi^2/$dof is a noise-calibrated goodness of
 fit: at $1.04$ (Table~\ref{tab:headline}) the per-pixel residuals are consistent with
 photon and read noise, i.e.\ no unmodeled pixel-level structure---a statement available
-to a sub-pixel model only through its rendered output. Second, the predicted ePSF
+to a sub-pixel model only through its rendered output. The variance is the survey's own
+inverse-weight (photon plus read noise) map, not a quantity tuned to the residuals, so
+$\chi^2\!\approx\!1$ is an independent calibration check rather than a fitted outcome.
+Second, the predicted ePSF
 centroid matches the star centroid to $0.010$\,px ($2.6$\,mas) in median offset, versus
 $0.017$\,px ($4.5$\,mas) for \textsc{PIFF} and $0.020$\,px ($5.1$\,mas) for \textsc{PSFEx}
-(Table~\ref{tab:astrom})---a near $2\times$ improvement on the very quantity the ePSF
-formalism was constructed to optimize.
+(Table~\ref{tab:astrom}); all three centroids are measured with the same adaptive-moment
+routine on the same pixel grid, so the difference reflects the models, not a centroiding
+convention. This is a near $2\times$ improvement on a quantity the ePSF formalism is built
+to optimize.
 
 \begin{deluxetable}{lccc}
 \tablecaption{Astrometric residual of the model PSF centroid relative to the star, on
