@@ -69,9 +69,14 @@ across exposures and nights, (ii)~degrades when few clean stars are available, a
 (iii)~is purely empirical at the star positions---it does not exploit auxiliary
 information such as stellar color, which sets the chromatic PSF.
 
-We take an amortized, learning-based approach. A single network is trained across many
-exposures to map an exposure's stars (the \emph{context}) to a continuous PSF field,
-queryable at arbitrary position, color, flux, and resolution. The inferential target is
+We take an amortized, learning-based approach. Rather than fit each exposure's PSF from
+scratch, a single network learns---across many exposures---a \emph{data-adaptive prior}
+over how the PSF looks and varies, and applies it to a new exposure in one forward pass,
+mapping that exposure's stars (the \emph{context}) to a continuous PSF field queryable at
+arbitrary position, color, flux, and resolution. Amortizing a learned prior in place of
+per-exposure curve fitting is the central idea: it lets the model pool information across
+the training set that no single-exposure fit can access (and, in principle, across the
+focal plane). The inferential target is
 the PSF at \emph{star-free} positions, where galaxies are measured; predicting held-out
 stars is the training objective and the validation instrument. We train and evaluate on
 DES single-epoch data and benchmark against \textsc{PIFF} and \textsc{PSFEx} run by us
