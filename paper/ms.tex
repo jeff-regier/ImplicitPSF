@@ -168,7 +168,7 @@ factor.\label{fig:arch}}
 
 \paragraph{Architecture} Each detected source is encoded from its pixel cutout (a learned
 image encoder applied to the scale-normalized stamp), its sky position (sinusoidal
-encoding), and scalar color and $\log$-flux. A multi-head self-attention block lets every
+encoding), and scalar color and $\log$-flux. A multi-head self-attention block \\citep{Vaswani2017} lets every
 query attend to the context sources; a coordinate decoder then renders the PSF at the
 query position and any oversampling factor, returning the pixel-convolved effective PSF
 used to convolve galaxy models. We use a polar (spin-2-aware) angular parametrization of
