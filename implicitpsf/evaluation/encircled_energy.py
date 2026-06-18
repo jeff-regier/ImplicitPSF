@@ -2,13 +2,18 @@
 
 The W1 galaxy-recovery test traced the ~8% recovered-size deficit to the model PSF being
 slightly *under-concentrated* in the central few pixels (a profile-shape effect, not a
-second-moment size error). This diagnostic quantifies that directly: for reserved test
-stars it renders the model PSF and the (background-subtracted) empirical star stamp, both
-unit-normalized, and compares their encircled energy EE(r) = (flux within radius r of the
-flux-weighted centroid) / (total flux). A negative deficit EE_model(r) - EE_star(r) at
-small r is the core under-concentration. This is the headline metric for the W3
-architecture bake-off (we want the deficit at r=2 px driven to ~0 with no reserved-star
-ellipticity regression).
+second-moment size error). This diagnostic stacks core-normalized model-PSF and
+(background-subtracted) empirical-star reserved-star stamps and compares their encircled
+energy EE(r) = flux(<r) / flux(<8 px); a negative deficit EE_model - EE_star at small r is
+the core under-concentration.
+
+CAVEAT (measured, June 18): the *absolute* deficit is noise-limited on single-epoch stars
+-- it is sensitive to the normalization (clipping rectifies star noise into a positive
+bias; a full-stamp-total denominator is unstable), and even this aperture-normalized,
+stacked estimate gives only +0.03 +/- 0.055 at r=2 on 8 exposures (consistent with zero).
+Use it for RELATIVE same-star candidate comparison over many exposures, not a precise
+absolute number. The robust primary bake-off metric is the galaxy-recovery size bias
+(W1: -7.8%); this is a supporting check.
 
 Runs on real data (the sim does not reproduce the deficit). CPU-friendly for a few hundred
 stars; never share a GPU with a live training.
