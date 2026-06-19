@@ -25,10 +25,12 @@ import galsim
 import numpy as np
 import pandas as pd
 import torch
+from astropy.io import fits
 
-from implicitpsf.baselines.catalogs import write_piff_catalog
+from implicitpsf.baselines.catalogs import write_piff_catalog, write_psfex_ldac
 from implicitpsf.baselines.implicit_runner import load_model
 from implicitpsf.baselines.piff_runner import fit_piff, render_piff
+from implicitpsf.baselines.psfex_runner import fit_psfex, render_psfex
 from implicitpsf.blend import chebyshev_distances, sample_grid
 from implicitpsf.datasets import load_exposure_file, make_batch, stable_seed
 from implicitpsf.evaluation.galaxy_fit import OVERSAMPLE, fit_galaxies
@@ -132,12 +134,26 @@ def piff_kernels(psf, x, y, grid):
     return np.stack(kernels)
 
 
+def psfex_kernels(psf_path, fits_path, x, y, grid):
+    """PSFEx kernels in the data pixel frame, resampled on the fine lattice exactly as the
+    truth/PIFF arms. ``render_psfex`` draws WCS-aware via galsim DES_PSFEx (``no_pixel``); we
+    wrap each pixel-frame stamp as an InterpolatedImage rather than sampling on a bare lattice,
+    identical to ``piff_kernels`` (so PSFEx cannot reintroduce the transpose/sampling bug)."""
+    stamps = render_psfex(psf_path, fits_path, x, y, patch_size=PATCH)  # (n, PATCH, PATCH)
+    kernels = []
+    for stamp in stamps:
+        image = galsim.Image(np.ascontiguousarray(stamp), scale=PIXEL_SCALE)
+        profile = galsim.InterpolatedImage(image, x_interpolant="lanczos15", normalization="flux")
+        kernels.append(lattice_kernel(profile, grid))
+    return np.stack(kernels)
+
+
 def truth_kernels(anchor_profiles, grid):
     """Lattice kernels from each anchor's own empirical PSF (the validation arm)."""
     return np.stack([lattice_kernel(p, grid) for p in anchor_profiles])
 
 
-def evaluate_exposure(model, data, index, reserved_ids, workdir, free_n):
+def evaluate_exposure(model, data, index, reserved_ids, workdir, free_n, with_psfex):
     exposure_id = data["exposure_id"][index]
     anchors = select_anchors(data, index, reserved_ids)
     if len(anchors) == 0:
@@ -172,16 +188,39 @@ def evaluate_exposure(model, data, index, reserved_ids, workdir, free_n):
     noises = np.array(noises)
 
     grid = sample_grid(PATCH, OVERSAMPLE, torch.device("cpu"), torch.float64).numpy()
+    fits_path = data["fits_path"][index]
     cat_path = Path(workdir) / "piff_cat.fits"
     write_piff_catalog(
         star_x[fit_mask], star_y[fit_mask], data["flux"][index].numpy()[fit_mask], cat_path
     )
-    piff_psf = fit_piff(data["fits_path"][index], cat_path, Path(workdir) / "model.piff")
+    piff_psf = fit_piff(fits_path, cat_path, Path(workdir) / "model.piff")
+
     arms = {
         "truth": truth_kernels(profiles, grid),
         "implicit": implicit_kernels(model, data, index, fit_mask, ax, ay),
         "piff": piff_kernels(piff_psf, ax, ay, grid),
     }
+    if with_psfex:  # PSFEx fit + DES_PSFEx render is ~10 min/exposure; opt in for the final table
+        with fits.open(fits_path) as hdul:
+            image_header = hdul["SCI"].header
+        ldac_path = Path(workdir) / "psfex_cat.fits"
+        write_psfex_ldac(
+            cutouts[fit_mask],
+            valid[fit_mask],
+            star_x[fit_mask],
+            star_y[fit_mask],
+            data["flux"][index].numpy()[fit_mask],
+            data["flux_err"][index].numpy()[fit_mask],
+            data["snr"][index].numpy()[fit_mask],
+            float(data["fwhm"][index]),
+            image_header,
+            ldac_path,
+            gain=float(data["gain"][index]),
+            background_dev=float(data["skysigma"][index]),
+            saturation=float(image_header["SATURATE"]),
+        )
+        psfex_path = fit_psfex(ldac_path, Path(workdir) / "psfex_out")
+        arms["psfex"] = psfex_kernels(psfex_path, fits_path, ax, ay, grid)
 
     arm_names = list(arms)
     kernels = torch.tensor(np.concatenate([arms[a] for a in arm_names]), dtype=torch.float32)
@@ -237,7 +276,9 @@ def eval_file_group(args, file_name, exposures):
         reserved_ids = reserved_star_ids(manifest, exposure_id)
         with tempfile.TemporaryDirectory() as workdir:
             try:
-                frame = evaluate_exposure(model, data, index, reserved_ids, workdir, args.free_n)
+                frame = evaluate_exposure(
+                    model, data, index, reserved_ids, workdir, args.free_n, args.with_psfex
+                )
                 if frame is not None:
                     frames.append(frame)
             except Exception:
@@ -256,6 +297,11 @@ def main():
     parser.add_argument("--max-exposures", type=int, default=None)
     parser.add_argument("--num-workers", type=int, default=8)
     parser.add_argument("--free-n", action="store_true")
+    parser.add_argument(
+        "--with-psfex",
+        action="store_true",
+        help="add the PSFEx arm (4th method); ~10 min/exposure, so use few exposures",
+    )
     args = parser.parse_args()
 
     manifest = load_manifest(args.manifest)
