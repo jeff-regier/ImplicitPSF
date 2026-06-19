@@ -370,12 +370,12 @@ We test the inferential goal directly. We inject \textsc{galsim} galaxies, convo
 a strictly isolated reserved star's empirical PSF, at that star's position; each method
 predicts the PSF there from the \emph{other} stars and recovers the galaxy. The truth arm
 (the anchor's own image) recovers near-zero ellipticity bias, validating the protocol.
-On the $r$-band test exposures (Table~\ref{tab:galrec}), all three methods recover galaxy
+On 32 $r$-band test exposures (170 anchors; Table~\ref{tab:galrec}), all three methods recover galaxy
 \emph{ellipticity} with low bias ($|\Delta e_1|\lesssim0.01$): the pixel-convolved
 effective PSF carries the PSF ellipticity faithfully into the forward model, so no method
 imprints a coherent shape error on the recovered galaxies---the weak-lensing-critical
 property, which our model satisfies on par with the per-exposure baselines. The methods
-separate instead on recovered \emph{size}: \textsc{PIFF} is slightly large ($+3.4\%$),
+separate instead on recovered \emph{size}: \textsc{PIFF} is slightly large ($+1.1\%$),
 while our recovered sizes are ${\sim}8\%$ small. This is \emph{not} a second-moment size
 error---rendered at a fiducial flux, the model's PSF size is accurate at both star and
 star-free positions (within $1\%$)---but a profile-shape effect: the model's PSF is
@@ -385,26 +385,28 @@ attribute this to spectral bias of the coordinate decoder, which under-resolves 
 PSF core; \S\ref{sec:discussion} diagnoses this and shows it shrinks with a sharper
 coordinate encoding. The size deficit is the main residual systematic of our model;
 recovered ellipticity, the consequential quantity for shear, is unbiased.
-\begin{figure}
+\begin{figure*}
 \centering
-\includegraphics[width=\columnwidth]{figures/fig_galrec.pdf}
-\caption{Galaxy ellipticity recovery on real data (star-anchored injection). All methods
-recover galaxy $e_1$ with low bias ($|\Delta e_1|\lesssim0.01$); they differ in recovered
-\emph{size}, not ellipticity (\S\ref{sec:galrec}).\label{fig:galrec}}
-\end{figure}
+\includegraphics[width=0.75\textwidth]{figures/fig_galrec.pdf}
+\caption{Galaxy recovery on real data (star-anchored injection), median $\pm$ bootstrap 95\%
+CI per arm. Left: recovered ellipticity is unbiased ($|\Delta e_1|\lesssim0.004$) for all
+three methods. Right: the methods separate on recovered \emph{size}---our model runs
+${\sim}8\%$ small (the PSF-core under-concentration), while \textsc{PIFF} and the truth arm
+are near zero (\S\ref{sec:galrec}).\label{fig:galrec}}
+\end{figure*}
 
 
 
 \begin{deluxetable}{lccc}
-\tablecaption{Star-anchored galaxy injection--recovery ($r$-band test exposures). The
+\tablecaption{Star-anchored galaxy injection--recovery (32 $r$-band test exposures, 170 anchors). The
 truth arm validates the protocol. All methods recover ellipticity with low bias; they
 separate on recovered size.\label{tab:galrec}}
 \tablehead{\colhead{Arm} & \colhead{Size bias} & \colhead{$\Delta e_1$} &
 \colhead{$\Delta e_2$}}
 \startdata
-Truth (validation) & $-1.2\%$ & $+0.008$ & $-0.004$ \\
-\textbf{This work}  & $-7.8\%$ & $-0.005$ & $+0.002$ \\
-\textsc{PIFF}       & $+3.4\%$ & $+0.004$ & $+0.004$ \\
+Truth (validation) & $-1.2\%$ & $-0.000$ & $-0.011$ \\
+\textbf{This work}  & $-7.6\%$ & $-0.001$ & $-0.008$ \\
+\textsc{PIFF}       & $+1.1\%$ & $-0.004$ & $-0.012$ \\
 \enddata
 \end{deluxetable}
 

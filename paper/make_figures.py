@@ -202,35 +202,39 @@ def fig_sampeff():
     plt.close(fig)
 
 
+def _median_ci(x, n_boot=2000):
+    """Median and bootstrap 95% CI half-width of a 1D array."""
+    x = np.asarray(x)
+    rng = np.random.default_rng(0)
+    boot = np.median(rng.choice(x, (n_boot, len(x))), axis=1)
+    return np.median(x), 0.5 * (np.percentile(boot, 97.5) - np.percentile(boot, 2.5))
+
+
 def fig_galrec():
-    """Galaxy ellipticity recovery bias per arm (star-anchored injection)."""
+    """Galaxy recovery per arm (star-anchored injection): ellipticity is recovered without
+    bias by all methods (left); the methods separate on recovered size (right), where our
+    model runs ~8% small from the PSF-core under-concentration."""
     d = pd.read_parquet(GALREC)
-    fig, ax = plt.subplots(figsize=(3.4, 2.8))
-    arms = [
-        ("truth", "k", "truth (validation)"),
-        ("implicit", "C3", "This work"),
-        ("piff", "C0", "PIFF"),
-    ]
-    for arm, col, label in arms:
-        a = d[d.arm == arm]
-        de1 = np.clip(a.eta1_fit - a.eta1_true, -0.4, 0.4)
-        ax.hist(
-            de1,
-            bins=50,
-            range=(-0.4, 0.4),
-            histtype="step",
-            density=True,
-            color=col,
-            label=label,
-            lw=1.4,
-        )
-    ax.axvline(0, color="k", lw=0.6, ls=":")
-    ax.set_xlabel("recovered $-$ true galaxy $e_1$")
-    ax.set_yticks([])
-    ax.set_ylabel("density")
-    ax.legend(fontsize=7.5, frameon=False)
-    ax.set_title("Galaxy ellipticity recovery (real data)")
-    fig.savefig(f"{FIGDIR}/fig_galrec.pdf")
+    arms = [("truth", "k", "truth"), ("implicit", "C3", "This work"), ("piff", "C0", "PIFF")]
+    fig, (axe, axs) = plt.subplots(1, 2, figsize=(7.0, 2.5))
+    ys = range(len(arms))
+    for ax, getter, xlabel, vline in [
+        (axe, lambda a: a.eta1_fit - a.eta1_true, r"$\Delta e_1$ (recovered $-$ true)", 0.0),
+        (axs, lambda a: 100 * (a.re_fit - a.re_true) / a.re_true, "size bias [\\%]", 0.0),
+    ]:
+        for y, (arm, col, _) in zip(ys, arms):
+            med, ci = _median_ci(getter(d[d.arm == arm]))
+            ax.errorbar(med, y, xerr=ci, fmt="o", color=col, capsize=3, ms=5)
+        ax.axvline(vline, color="k", lw=0.6, ls=":")
+        ax.set_yticks(list(ys))
+        ax.set_yticklabels([lbl for _, _, lbl in arms])
+        ax.set_ylim(-0.5, len(arms) - 0.5)
+        ax.set_xlabel(xlabel)
+    axe.set_title("ellipticity: unbiased for all", fontsize=8)
+    axs.set_title("size: our model $\\sim$8\\% small", fontsize=8)
+    fig.suptitle("Galaxy recovery on real data (star-anchored injection)", fontsize=9, y=1.02)
+    fig.tight_layout()
+    fig.savefig(f"{FIGDIR}/fig_galrec.pdf", bbox_inches="tight")
     plt.close(fig)
 
 
