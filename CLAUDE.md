@@ -32,12 +32,15 @@ uv run python -m implicitpsf.evaluation.sim_truth    # sim-only: truth at star-f
    `/data/scratch/regier/des_dr2_catalogs`
 3. `splits.py`: night-level train/val/test by deterministic hash + reserved-star lists,
    frozen in `manifests/*.json` (build once, commit, never regenerate after test eval)
-4. `train_psf.py`: producer/consumer queue, weighted chi^2 loss, per-epoch checkpoints,
-   best-on-val selection, cosine LR + warmup, `--patience` early stopping
+4. `train_psf.py`: producer/consumer queue, weighted chi^2 loss, a single rolling
+   `last.pt` + best-on-val `best.pt` (per-epoch files blow past the home quota),
+   cosine LR + warmup, `--patience` early stopping
 5. `evaluation/run_eval.py`: per test exposure, all methods fit on identical
    non-reserved clean stars, scored on identical reserved stars -> tidy parquet
-6. `simulate.py`: Moffat field with polynomial FWHM/g1/g2 variation; FITS written only
-   for val/test exposures (split computed at generation time, must match manifest args)
+6. `simulate.py`: Moffat or Kolmogorov (`--psf-model`) PSF field with polynomial
+   FWHM/g1/g2 variation (Kolmogorov has the realistic sharp core Moffat lacks); FITS
+   written only for val/test exposures (split computed at generation time, must match
+   manifest args)
 
 ## Schema and conventions
 
