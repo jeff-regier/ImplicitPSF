@@ -1,5 +1,5 @@
 """Appendix figures: (A1) a real DES image with the star-selection boxes overlaid, and
-(A2) one validation star shown beside the PSFEx, PIFF, and ImplicitPSF models at its
+(A2) one validation star shown beside the PSFEx, PIFF, and Neural PSF models at its
 position. Outputs vector PDFs to paper/figures/.
 """
 
@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from astropy.io import fits
+from matplotlib.lines import Line2D
 
 from implicitpsf.baselines.implicit_runner import load_model
 from implicitpsf.evaluation.run_eval import (
@@ -95,7 +96,7 @@ def fig_des_selection():
         (reserved, "deepskyblue", "reserved (held out)"),
         (context_only, "orange", "context-only star"),
     ]
-    for mask, color, label in styles:
+    for mask, color, _label in styles:
         inwin = mask & (x > x0) & (x < x1) & (y > y0) & (y < y1)
         for xi, yi in zip(x[inwin], y[inwin], strict=True):
             ax.add_patch(
@@ -103,12 +104,18 @@ def fig_des_selection():
                     (xi - s, yi - s), 2 * s, 2 * s, fill=False, edgecolor=color, lw=1.2
                 )
             )
-        ax.plot([], [], "s", mfc="none", mec=color, label=label)
-    ax.legend(loc="upper right", fontsize=7.5, framealpha=0.9)
+    # Build legend from explicit proxy handles. Empty ax.plot([], []) proxies add
+    # degenerate Line2D artists that perturb the aspect='equal' box and leave a white
+    # strip beside the rasterized image in the saved PDF.
+    handles = [
+        Line2D([], [], marker="s", mfc="none", mec=color, ls="none", label=label)
+        for _, color, label in styles
+    ]
+    ax.legend(handles=handles, loc="upper right", fontsize=7.5, framealpha=0.9)
     ax.set_xlabel("CCD $x$ (px)")
     ax.set_ylabel("CCD $y$ (px)")
     ax.set_title("DES single-epoch $r$-band (CCD 31), star selection")
-    fig.savefig(f"{FIGDIR}/fig_des_selection.pdf")
+    fig.savefig(f"{FIGDIR}/fig_des_selection.pdf", bbox_inches="tight")
     plt.close(fig)
 
 
@@ -131,22 +138,36 @@ def fig_psf_comparison():
         s = s.astype(np.float32)
         return s / s.sum()
 
-    panels = [
-        (norm(cut[j]), "observed star"),
+    obs = norm(cut[j])
+    models = [
         (norm(psfex[j]), "PSFEx"),
         (norm(piff[j]), "PIFF"),
-        (norm(impl[j]), "ImplicitPSF (ours)"),
+        (norm(impl[j]), "Neural PSF"),
     ]
-    vmax = max(p[0].max() for p in panels)
-    fig, axes = plt.subplots(1, 4, figsize=(7.2, 2.0))
-    for ax, (img, label) in zip(axes, panels, strict=True):
-        c = img.shape[0] // 2
-        ax.imshow(img[c - 12 : c + 12, c - 12 : c + 12], cmap="magma", vmin=0, vmax=vmax)
+    top = [(obs, "observed star"), *models]
+    vmax = max(img.max() for img, _ in top)
+    residuals = [(img - obs, label) for img, label in models]
+    rmax = max(np.abs(r).max() for r, _ in residuals)
+
+    def crop(s):
+        c = s.shape[0] // 2
+        return s[c - 12 : c + 12, c - 12 : c + 12]
+
+    fig, axes = plt.subplots(2, 4, figsize=(7.2, 3.9))
+    for ax, (img, label) in zip(axes[0], top, strict=True):
+        im0 = ax.imshow(crop(img), cmap="magma", vmin=0, vmax=vmax)
         ax.set_title(label, fontsize=8.5)
+    axes[1, 0].axis("off")
+    for ax, (res, label) in zip(axes[1, 1:], residuals, strict=True):
+        imr = ax.imshow(crop(res), cmap="RdBu_r", vmin=-rmax, vmax=rmax)
+        ax.set_title(f"{label} residual", fontsize=8.5)
+    for ax in axes.ravel():
         ax.set_xticks([])
         ax.set_yticks([])
-    fig.suptitle("Same reserved test star: observed versus modeled PSF", fontsize=9, y=1.04)
-    fig.savefig(f"{FIGDIR}/fig_psf_comparison.pdf")
+    fig.colorbar(im0, ax=axes[0], fraction=0.046, pad=0.02, label="normalized flux")
+    fig.colorbar(imr, ax=axes[1, 1:], fraction=0.046, pad=0.02, label="observed $-$ model")
+    fig.suptitle("Same reserved test star: observed, modeled PSF, and residual", fontsize=9, y=0.98)
+    fig.savefig(f"{FIGDIR}/fig_psf_comparison.pdf", bbox_inches="tight")
     plt.close(fig)
 
 

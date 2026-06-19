@@ -15,7 +15,7 @@ plt.rcParams.update(
 
 FIGDIR = "paper/figures"
 HEADLINE = "results/real_test_v6_blend_allmethods.parquet"
-METHOD_LABEL = {"implicit": "This work", "piff": "PIFF", "psfex": "PSFEx"}
+METHOD_LABEL = {"implicit": "Neural PSF", "piff": "PIFF", "psfex": "PSFEx"}
 METHOD_COLOR = {"implicit": "C3", "piff": "C0", "psfex": "C1"}
 
 
@@ -53,7 +53,7 @@ def fig_spatial_residuals():
         ax.set_xlabel("CCD $x$")
         fig.colorbar(im, ax=ax, fraction=0.05, pad=0.02)
     axes[0].set_ylabel("CCD $y$")
-    fig.suptitle("ImplicitPSF residual maps across the CCD", fontsize=9, y=1.02)
+    fig.suptitle("Neural PSF residual maps across the CCD", fontsize=9, y=1.02)
     fig.savefig(f"{FIGDIR}/fig_spatial_residuals.pdf")
     plt.close(fig)
 

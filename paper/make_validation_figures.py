@@ -98,21 +98,22 @@ def collect_residual_stacks():
 
 def fig_residual_stack():
     means, count = collect_residual_stacks()
-    labels = {"implicit": "This work", "piff": "PIFF", "psfex": "PSFEx"}
+    labels = {"implicit": "Neural PSF", "piff": "PIFF", "psfex": "PSFEx"}
     lim = 0.004  # common symmetric color scale (fraction of unit-sum light per pixel)
-    fig, axes = plt.subplots(1, 3, figsize=(7.2, 2.7))
+    fig, axes = plt.subplots(1, 3, figsize=(7.2, 2.7), layout="constrained")
     for ax, m in zip(axes, ["implicit", "piff", "psfex"], strict=True):
         rms = np.sqrt(np.mean(means[m] ** 2))
         im = ax.imshow(means[m], cmap="RdBu_r", vmin=-lim, vmax=lim, origin="lower")
         ax.set_title(f"{labels[m]}\nRMS$=${rms:.1e}", fontsize=8.5)
         ax.set_xticks([])
         ax.set_yticks([])
-        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.03)
+    # All panels share the symmetric scale, so one colorbar serves the row (per-panel
+    # colorbars overlapped the neighboring panels).
+    fig.colorbar(im, ax=axes, fraction=0.046, pad=0.02, label="fraction of unit-sum light")
     n = count["implicit"]
     fig.suptitle(
         f"Stacked normalized pixel residual (star $-$ model), {n} reserved stars",
         fontsize=9,
-        y=1.04,
     )
     fig.savefig(f"{FIGDIR}/fig_residual_stack.pdf")
     plt.close(fig)

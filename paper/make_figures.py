@@ -27,7 +27,7 @@ FIGDIR = "paper/figures"
 SIM_PT = sorted(glob.glob("/data/scratch/regier/sim_realdens6k_stars/*.pt"))[0]
 HEADLINE = "results/real_test_v6_blend_allmethods.parquet"
 GALREC = "results/galaxy_recovery_real_v6_blend.parquet"
-METHOD_LABEL = {"implicit": "This work", "piff": "PIFF", "psfex": "PSFEx"}
+METHOD_LABEL = {"implicit": "Neural PSF", "piff": "PIFF", "psfex": "PSFEx"}
 METHOD_COLOR = {"implicit": "C3", "piff": "C0", "psfex": "C1"}
 
 
@@ -36,29 +36,24 @@ def robust_std(x):
 
 
 def fig_simdata():
-    """Example synthetic cutouts: clean stars (top) and injected galaxies (bottom)."""
+    """Example synthetic clean-star cutouts (the point sources the model is trained on)."""
     data = torch.load(SIM_PT, map_location="cpu", weights_only=False)
     cut = data["cutouts"][0].numpy()
     st = data["star_type"][0].numpy()
     flux = data["flux"][0].numpy()
     stars = np.argwhere((st == 0) & (flux > 0)).ravel()[:8]
-    gals = np.argwhere((st == 2) & (flux > 0)).ravel()[:8]
 
-    fig, axes = plt.subplots(2, 8, figsize=(7.2, 2.0))
+    fig, axes = plt.subplots(1, 8, figsize=(7.2, 1.2))
     for col, idx in enumerate(stars):
         stamp = cut[idx]
-        axes[0, col].imshow(np.arcsinh(stamp / robust_std(stamp.ravel())), cmap="gray_r")
-    for col, idx in enumerate(gals):
-        stamp = cut[idx]
-        axes[1, col].imshow(np.arcsinh(stamp / robust_std(stamp.ravel())), cmap="gray_r")
+        axes[col].imshow(np.arcsinh(stamp / robust_std(stamp.ravel())), cmap="gray_r")
     for ax in axes.ravel():
         ax.set_xticks([])
         ax.set_yticks([])
         ax.grid(False)
-    axes[0, 0].set_ylabel("clean\nstars", fontsize=9)
-    axes[1, 0].set_ylabel("galaxies", fontsize=9)
+    axes[0].set_ylabel("clean\nstars", fontsize=9)
     fig.suptitle(
-        "Example simulated cutouts ($32\\times32$ px, arcsinh stretch)", fontsize=9, y=1.02
+        "Example simulated cutouts ($32\\times32$ px, arcsinh stretch)", fontsize=9, y=1.04
     )
     fig.savefig(f"{FIGDIR}/fig_simdata.pdf")
     plt.close(fig)
@@ -67,13 +62,14 @@ def fig_simdata():
 def fig_psffield():
     """Whisker plot of the true (spatially varying) PSF ellipticity field in simulation."""
     d = pd.read_parquet("results/truth_sim_realdens6k_single_s7.parquet")
-    d = d[(d.method == "implicit") & (d.flag_true == 0)].iloc[:600]
+    # Thin the sample so each whisker has room to be drawn long enough to read.
+    d = d[(d.method == "implicit") & (d.flag_true == 0)].iloc[:240]
     e = np.hypot(d.e1_true, d.e2_true)
     ang = 0.5 * np.arctan2(d.e2_true, d.e1_true)
-    scale = 220.0
+    scale = 700.0
     dx = scale * e * np.cos(ang)
     dy = scale * e * np.sin(ang)
-    fig, ax = plt.subplots(figsize=(3.4, 3.4))
+    fig, ax = plt.subplots(figsize=(3.6, 3.6))
     ax.quiver(
         d.x,
         d.y,
@@ -85,9 +81,10 @@ def fig_psffield():
         scale=1,
         headwidth=1,
         headlength=0,
+        headaxislength=0,
         pivot="mid",
         cmap="viridis",
-        width=0.004,
+        width=0.007,
     )
     ax.set_xlabel("CCD $x$ (px)")
     ax.set_ylabel("CCD $y$ (px)")
@@ -100,7 +97,7 @@ def fig_psffield():
 def fig_residuals():
     """Real-data reserved-star residual histograms for the three methods."""
     d = pd.read_parquet(HEADLINE)
-    fig, axes = plt.subplots(1, 3, figsize=(7.2, 2.4))
+    fig, axes = plt.subplots(1, 3, figsize=(7.2, 2.6), layout="constrained")
     panels = [
         ("$\\delta T/T$", lambda a: (a.T_model - a.T_star) / a.T_star, (-0.15, 0.15)),
         ("$\\delta e_1$", lambda a: a.e1_model - a.e1_star, (-0.06, 0.06)),
@@ -123,9 +120,11 @@ def fig_residuals():
         ax.axvline(0, color="k", lw=0.6, ls=":")
         ax.set_xlabel(label)
         ax.set_yticks([])
-    axes[0].legend(fontsize=7, frameon=False)
     axes[0].set_ylabel("density")
-    fig.suptitle("Reserved-star residuals on the DES test split", fontsize=9, y=1.02)
+    handles, labels = axes[0].get_legend_handles_labels()
+    # Place the legend outside (above) the panels so it cannot overlap the centered
+    # histogram peaks; constrained_layout reserves the space.
+    fig.legend(handles, labels, loc="outside upper center", ncol=3, fontsize=8, frameon=False)
     fig.savefig(f"{FIGDIR}/fig_residuals.pdf")
     plt.close(fig)
 
@@ -215,14 +214,18 @@ def fig_galrec():
     bias by all methods (left); the methods separate on recovered size (right), where our
     model runs ~8% small from the PSF-core under-concentration."""
     d = pd.read_parquet(GALREC)
-    arms = [("truth", "k", "truth"), ("implicit", "C3", "This work"), ("piff", "C0", "PIFF")]
+    arms = [
+        ("truth", "k", "True PSF"),
+        ("implicit", "C3", "Neural PSF"),
+        ("piff", "C0", "PIFF"),
+    ]
     fig, (axe, axs) = plt.subplots(1, 2, figsize=(7.0, 2.5))
     ys = range(len(arms))
     for ax, getter, xlabel, vline in [
         (axe, lambda a: a.eta1_fit - a.eta1_true, r"$\Delta e_1$ (recovered $-$ true)", 0.0),
         (axs, lambda a: 100 * (a.re_fit - a.re_true) / a.re_true, "size bias [\\%]", 0.0),
     ]:
-        for y, (arm, col, _) in zip(ys, arms):
+        for y, (arm, col, _) in zip(ys, arms, strict=True):
             med, ci = _median_ci(getter(d[d.arm == arm]))
             ax.errorbar(med, y, xerr=ci, fmt="o", color=col, capsize=3, ms=5)
         ax.axvline(vline, color="k", lw=0.6, ls=":")

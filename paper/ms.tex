@@ -10,8 +10,8 @@
 
 \begin{document}
 
-\title{Learning the Effective PSF: An Amortized, Neural PSF Field for
-DES Single-Epoch Imaging}
+\title{Learning the Effective PSF: A Neural PSF Field with Amortized
+Inference for DES Single-Epoch Imaging}
 
 \author{Jeffrey Regier}
 \email{regier@umich.edu}
@@ -20,37 +20,28 @@ DES Single-Epoch Imaging}
 \collaboration{1}{(The LSST Dark Energy Science Collaboration)}
 
 \begin{abstract}
-Accurate point-spread-function (PSF) models are the dominant systematic in weak-lensing
-shear measurement. Per-exposure fitters (e.g., \textsc{PSFEx}, \textsc{PIFF}) represent
+Errors in the modeled point-spread-function (PSF) are a leading source of systematic error
+in weak-lensing shear measurement. Per-exposure fitters (e.g., \textsc{PSFEx}, \textsc{PIFF}) represent
 the PSF as a sub-pixel surface-brightness profile that must be convolved with an assumed
-pixel response to predict an image. We instead target the \emph{effective} PSF---the
-pixel-convolved point-source response, i.e.\ the expected pixel values a point source
-produces. This is the quantity that sampled data actually identify and the exact kernel
-needed to forward-model galaxies. A single \emph{amortized} neural network (multi-head
-attention over an exposure's stars---position, color, flux, and pixel cutouts) predicts
-this effective PSF at any queried position and oversampling, with no per-exposure fitting
-at test time; trained by inverse-variance least squares, it regresses the conditional
-expectation of the pixels, so its training target, the quantity it models, and the
-reserved-star residuals it is validated on all coincide.
-On 3{,}301 frozen test exposures of Dark Energy Survey (DES) single-epoch imaging
-(CCD~31, $grizY$; 73{,}609 reserved stars), the model matches or exceeds \textsc{PIFF}
-and \textsc{PSFEx} on every metric: size-residual scatter $0.030$ versus $0.039/0.037$,
-ellipticity errors $|\delta e_1|,|\delta e_2|=0.015/0.015$ versus $0.017/0.016$
-(\textsc{PIFF}), and shape correlations $0.65/0.61$ versus $0.61/0.58$ (\textsc{PIFF}),
-at $\chi^2/{\rm dof}=1.04$. In a star-anchored galaxy injection--recovery test on real
-data, our PSF recovers galaxy \emph{ellipticity} without coherent bias
-($|\Delta e_1|\lesssim0.01$, on par with \textsc{PIFF})---the weak-lensing-critical
-quantity---while recovered galaxy \emph{sizes} run ${\sim}8\%$ small. We trace this to the
-coordinate decoder under-resolving the sharp PSF core and reduce it with a sharper
-frequency encoding. Color
-conditioning removes a chromatic PSF-size systematic that the baselines retain
-($+0.004$/mag versus $\sim\!-0.06$/mag residual slope). The model is flat in the number
-of available fit stars where \textsc{PIFF} degrades sharply ($\chi^2\simeq1.1$ versus
-$5.1$ at five stars). Using simulations as a controlled instrument, we show that a
-\emph{blend forward-model} training loss removes a size bias from unrecognized blends,
-and we identify and fix a spin-2 representation failure in which the network corrupts the
-PSF ellipticity by attending to galaxy detections in its context; restricting attention
-to point sources recovers it fully.
+pixel response to predict an image. We instead target the \emph{effective} PSF (the
+pixel-convolved point-source response): the quantity sampled data identify and the exact
+kernel for forward-modeling galaxies. A single neural network (multi-head
+attention over an exposure's stars) predicts this effective PSF at any queried position
+and oversampling in one forward pass, \emph{amortizing} the per-exposure fitting that
+\textsc{PSFEx} and \textsc{PIFF} repeat on every image.
+On 3{,}301 frozen test exposures of Dark Energy Survey single-epoch imaging, the model
+matches or exceeds \textsc{PIFF} and \textsc{PSFEx} on every reserved-star metric---size
+and ellipticity residuals, shape correlation, and per-pixel goodness of fit. In a
+star-anchored galaxy injection--recovery test on real data, it recovers galaxy
+\emph{ellipticity}---the weak-lensing-critical quantity---without coherent bias and on par
+with \textsc{PIFF}, while recovered \emph{sizes} run a few percent small; we trace this to
+the coordinate decoder under-resolving the sharp PSF core and reduce it with a sharper
+frequency encoding. Color conditioning further removes a chromatic PSF-size systematic
+that the baselines retain, and the model stays accurate in star-sparse exposures where
+\textsc{PIFF} degrades sharply. Controlled simulations motivate two training choices: a
+\emph{blend forward-model} loss that removes a size bias from unrecognized blends, and
+point-source-only attention, which fixes a spin-2 representation failure triggered by
+galaxy detections in the context.
 \end{abstract}
 
 \keywords{Weak gravitational lensing (1797) --- Point spread function (1349) ---
@@ -66,69 +57,80 @@ Survey pipelines model the PSF per exposure by fitting that exposure's stars wit
 flexible model interpolated across the focal plane \citep[\textsc{PSFEx};][]{Bertin2011}
 \citep[\textsc{PIFF};][]{Jarvis2021}. This is robust but (i)~discards information shared
 across exposures and nights, (ii)~degrades when few clean stars are available, and
-(iii)~is purely empirical at the star positions---it does not exploit auxiliary
+(iii)~is purely empirical at the star positions: it does not exploit auxiliary
 information such as stellar color, which sets the chromatic PSF.
 
 We take an amortized, learning-based approach. Rather than fit each exposure's PSF from
-scratch, a single network learns---across many exposures---a \emph{data-adaptive prior}
+scratch, a single network learns, across many exposures, a \emph{data-adaptive prior}
 over how the PSF looks and varies, and applies it to a new exposure in one forward pass,
 mapping that exposure's stars (the \emph{context}) to a continuous PSF field queryable at
-arbitrary position, color, flux, and resolution. Amortizing a learned prior in place of
-per-exposure curve fitting is the central idea: it lets the model pool information across
-the training set that no single-exposure fit can access (and, in principle, across the
-focal plane). The inferential target is
+arbitrary position, color, flux, and resolution. This pools information across
+the training set that no single-exposure fit can access, and in principle across the
+focal plane. The inferential target is
 the PSF at \emph{star-free} positions, where galaxies are measured; predicting held-out
 stars is the training objective and the validation instrument. We train and evaluate on
 DES single-epoch data and benchmark against \textsc{PIFF} and \textsc{PSFEx} run by us
 under matched conditions.
 
-A second, more fundamental difference is the \emph{target} of the model. Traditional
-PSF models---including \textsc{PSFEx} (super-sampled pixels) and \textsc{PIFF} (a
-surface-brightness profile on the sky)---represent the PSF as a continuous function on
+A second difference is the \emph{target} of the model. Traditional
+PSF models, including \textsc{PSFEx} (super-sampled pixels) and \textsc{PIFF} (a
+surface-brightness profile on the sky), represent the PSF as a continuous function on
 $\mathbb{R}^2$ at finer-than-pixel resolution, which must then be convolved with an
 assumed pixel-response kernel to predict what a detector records. We instead model the
 \emph{effective} PSF \citep[ePSF;][]{AndersonKing2000}: the instrumental PSF already
 integrated over the pixel, i.e.\ the expected fraction of a point source's light falling
 in each pixel as a function of the source's sub-pixel position. The network maps a query
 position (and color, flux) directly to these expected pixel values, never representing
-the continuous PSF explicitly---the sense in which our PSF is \emph{implicit}. This
-target is more principled on two grounds. First, identifiability: from sampled data one
+the continuous PSF explicitly: the sense in which our PSF is \emph{implicit}. Two grounds
+motivate this target. First, identifiability: from sampled data one
 cannot uniquely recover the sub-pixel surface brightness without extra assumptions,
-whereas the ePSF is exactly what the pixels constrain---the reason it underpins
+whereas the ePSF is exactly what the pixels constrain, the reason it underpins
 state-of-the-art point-source astrometry and photometry \citep{AndersonKing2000,
 Lauer1999, Liaudat2023}. Second, sufficiency: the ePSF as a function of source position
-is a sufficient statistic for forward-modeling \emph{any} source---a galaxy's expected
+is a sufficient statistic for forward-modeling \emph{any} source: a galaxy's expected
 pixel data is its surface brightness convolved with the ePSF, with no separate pixel
-step \citep{BernsteinJarvis2002}---so the ePSF is precisely the kernel a shear pipeline
+step \citep{BernsteinJarvis2002}, so the ePSF is precisely the kernel a shear pipeline
 needs. The only residual is discretizing that convolution on a finite grid, which our
 ability to render at arbitrary oversampling controls directly.
 \begin{figure*}
 \centering
 \begin{tikzpicture}[
-  node distance=5mm and 8mm,
-  box/.style={draw, rounded corners, align=center, minimum height=9mm,
+  node distance=4mm and 8mm,
+  box/.style={draw, rounded corners, align=center, minimum height=8mm,
               font=\footnotesize, fill=blue!6, inner sep=3pt},
-  dat/.style={draw, align=center, minimum height=9mm, font=\footnotesize,
+  dat/.style={draw, align=center, minimum height=8mm, font=\footnotesize,
               fill=gray!8, inner sep=3pt},
-  net/.style={draw, rounded corners, align=center, minimum height=9mm,
-              font=\footnotesize\bfseries, fill=red!8, inner sep=3pt},
+  net/.style={draw, rounded corners, align=center, minimum height=12mm,
+              font=\footnotesize\bfseries, fill=red!8, inner sep=4pt},
+  outbox/.style={draw, rounded corners, align=center, minimum height=8mm,
+              font=\footnotesize, fill=green!8, inner sep=3pt},
   arr/.style={-{Stealth[length=2mm]}, thick}]
-\node[dat] (exp) {DES exposure\\(single-epoch)};
-\node[box, right=of exp] (det) {detect (SEP)\\+ DR2 match};
-\node[dat, right=of det] (ctx) {context stars\\$\{x,y,\,g{-}i,\,f,\,\mathrm{cutout}\}$};
-\node[net, right=of ctx] (npsf) {attention\\PSF field};
-\node[box, above right=4mm and 9mm of npsf] (res)
-  {query reserved star\\$\to\ \chi^2$ \footnotesize(train/val)};
-\node[box, below right=4mm and 9mm of npsf] (gal)
+% amortized training: many exposures fold into one network, once
+\node[dat] (train) {training set\\(many exposures)};
+\node[net, right=12mm of train] (npsf) {one neural PSF field\\trained \emph{across} exposures\\(no per-exposure fit)};
+\draw[arr] (train) -- node[above, font=\scriptsize]{train once}
+                     node[below, font=\scriptsize]{(amortize)} (npsf);
+% deployment on a new exposure: detect -> context -> same fixed network
+\node[dat, below=11mm of train] (exp) {new exposure\\(single-epoch)};
+\node[box, right=7mm of exp] (det) {detect (SEP)\\+ DR2 match};
+\node[dat, right=6mm of det] (ctx) {context stars\\$\{x,y,\,g{-}i,\,f,\,\mathrm{cutout}\}$};
+\draw[arr] (exp)--(det); \draw[arr] (det)--(ctx);
+\draw[arr] (ctx.east) to[out=0,in=-90] node[below right=-1mm and -2mm, font=\scriptsize]
+  {one forward pass} (npsf.south);
+% two queries of the same field
+\node[box, above right=3mm and 11mm of npsf] (res)
+  {query reserved star\\$\to\ \chi^2$ \footnotesize(train/validate)};
+\node[outbox, below right=3mm and 11mm of npsf] (gal)
   {query star-free position\\$\to$ render ePSF $\to$ convolve galaxy};
-\draw[arr] (exp)--(det); \draw[arr] (det)--(ctx); \draw[arr] (ctx)--(npsf);
 \draw[arr] (npsf.east) to[out=30,in=180] (res.west);
 \draw[arr] (npsf.east) to[out=-30,in=180] (gal.west);
 \end{tikzpicture}
-\caption{Overall workflow. A single network, trained across exposures, maps an
-exposure's detected stars (context) to a continuous PSF field. Querying held-out reserved
-stars provides the training objective and validation; the inferential target is the PSF
-at star-free positions, rendered (oversampled) to convolve galaxy models.\label{fig:workflow}}
+\caption{Overall workflow and amortization. A single network is trained once across many
+exposures (top) and then applied to a new exposure in one forward pass, with no
+per-exposure fitting: its detected stars (context) are mapped to a continuous PSF field
+(bottom). The \emph{same} field is queried two ways: at held-out reserved stars, giving the
+training objective and validation, and at star-free positions, where the rendered
+(oversampled) effective PSF convolves galaxy models---the inferential target.\label{fig:workflow}}
 \end{figure*}
 
 
@@ -153,13 +155,13 @@ at star-free positions, rendered (oversampled) to convolve galaxy models.\label{
 \node[op, right=6mm of pos] (sum) {$+$};
 \draw[arr] (cut.east) -- (sum); \draw[arr] (pos.east) -- (sum); \draw[arr] (sca.east) -- (sum);
 \node[align=center, font=\scriptsize, above=1mm of cut] {\emph{per source $i$ (point sources only)}};
-\node[att, right=8mm of sum] (mha) {multi-head\\self-attention\\$\times N$};
-\draw[arr] (sum) -- node[above, font=\scriptsize]{tokens} (mha);
-\node[dec, right=8mm of mha] (film) {FiLM-modulated\\coordinate decoder\\(polar grid)};
-\draw[arr] (mha) -- node[above, font=\scriptsize]{context feats} (film);
-\node[enc, above=5mm of film] (q) {query: $x,y$, color, $f$};
+\node[att, right=14mm of sum] (mha) {multi-head\\self-attention\\$\times N$};
+\draw[arr] (sum) -- node[above, font=\scriptsize, inner sep=1pt]{tokens} (mha);
+\node[dec, right=20mm of mha] (film) {FiLM-modulated\\coordinate decoder\\(polar grid)};
+\draw[arr] (mha) -- node[above, font=\scriptsize, inner sep=1pt]{context feats} (film);
+\node[enc, above=7mm of film] (q) {query: $x,y$, color, $f$};
 \draw[arr] (q) -- (film);
-\node[dec, right=8mm of film, fill=green!8] (psf) {PSF stamp\\(any oversampling)};
+\node[dec, right=12mm of film, fill=green!8] (psf) {PSF stamp\\(any oversampling)};
 \draw[arr] (film) -- (psf);
 \end{tikzpicture}
 \caption{Network architecture. Each context source (restricted to point sources;
@@ -177,11 +179,11 @@ image encoder applied to the scale-normalized stamp), its sky position (sinusoid
 encoding), and scalar color and $\log$-flux. A multi-head self-attention block \citep{Vaswani2017} lets every
 query attend to the context sources; a coordinate decoder then renders the PSF at the
 query position and any oversampling factor, returning the pixel-convolved effective PSF
-used to convolve galaxy models. We use a polar (spin-2-aware) angular parametrization of
-the decoder and FiLM modulation of the decoder by the attended context features.
+used to convolve galaxy models. The decoder uses a polar, spin-2-aware angular parametrization, with FiLM modulation
+by the attended context features.
 
 \paragraph{Inferential target (effective PSF)} The decoder outputs the effective PSF
-\citep{AndersonKing2000}---the pixel-integrated point-source response---sampled at the
+\citep{AndersonKing2000}, the pixel-integrated point-source response, sampled at the
 query grid, optionally oversampled. Because the loss below compares predicted stamps to
 \emph{observed} star pixels, the model regresses the observable by construction: it
 learns $\mathbb{E}[\text{pixel value}\mid\text{point source at }(x,y)]$ directly, rather
@@ -189,9 +191,9 @@ than fitting a sub-pixel profile and assuming a pixel kernel. Identifiability al
 three things that a non-identifiable model keeps separate: our training target, the
 quantity we model, and the quantity we validate all coincide, so reserved-star residuals
 (\S\ref{sec:results}) directly test what we fit. A surface-brightness model is instead
-validated only through pixel- or moment-space summaries of its rendered output---the
-same observable space---so its extra sub-pixel degrees of freedom are never themselves
-constrained by the data. This is also what makes the benchmark fair: we score all three
+validated only through pixel- or moment-space summaries of its rendered output, the
+same observable space, so its extra sub-pixel degrees of freedom are never themselves
+constrained by the data. We score all three
 methods on moments measured in pixel space (model stamp versus star stamp), so no method
 is privileged by its internal representation. The
 same pixel-convolved output is the kernel used to forward-model galaxies in
@@ -203,7 +205,7 @@ observed star cutouts, with the per-star amplitude solved in closed form. Star p
 noisy realizations whose conditional mean is the effective PSF; a squared-error objective
 is minimized by the conditional expectation $\mathbb{E}[\,\text{pixel}\mid\text{source,
 context}\,]$, so with enough capacity and data the objective is minimized by that
-quantity---the identifiable effective PSF. The network thus targets only what the pixels
+quantity, the identifiable effective PSF. The network thus targets only what the pixels
 constrain, rather than a finer-than-pixel profile the sampled data do not determine. We
 introduce a
 \emph{blend forward-model} loss: rather than treat each clean star as isolated, we model
@@ -231,10 +233,11 @@ test/validation exposure reserved for scoring only; the test split is 3{,}301 ex
 across $grizY$. Reserved stars are excluded from every method's fit/context and scored
 identically across methods on the same pixel grid.
 
-\paragraph{Simulations} A matched pipeline renders Moffat PSF fields (second-order
-polynomial FWHM and shear variation---exactly representable by \textsc{PIFF}/\textsc{PSFEx},
-a deliberately fair-to-baselines choice) into the same data format, optionally with
-chromatic FWHM--color dependence, blended stars, and injected galaxy detections. Star
+\paragraph{Simulations} A matched pipeline renders Moffat PSF fields into the same data format, with FWHM and shear
+varying as second-order polynomials across the field. This variation lies within the
+polynomial spatial model that \textsc{PIFF} and \textsc{PSFEx} fit, so it does not handicap
+the baselines. The renderer optionally adds a chromatic dependence of FWHM on color, blended
+stars, and injected galaxy detections. Star
 density, galaxy density ($3{:}1$), and per-source S/N are tuned to match the real
 extraction. The simulation is the controlled instrument for the systematics studies in
 \S\ref{sec:sim}.
@@ -243,7 +246,10 @@ extraction. The simulation is the controlled instrument for the systematics stud
 \begin{figure*}
 \centering
 \includegraphics[width=\textwidth]{figures/fig_simdata.pdf}
-\caption{Example simulated cutouts. Clean stars (top) are compact point sources; injected galaxies (bottom) are visibly extended and elliptical (second-moment size $T\approx33$ vs $15\,$px$^2$). Both are presented to the network as context.\label{fig:simdata}}
+\caption{Example simulated clean-star cutouts ($32\times32$ px, arcsinh stretch): the
+compact point sources that inform the PSF. Galaxy detections also populate the simulated
+fields but, under the point-source-context policy (\S\ref{sec:method},~\S\ref{sec:sim}),
+are excluded from the attention context.\label{fig:simdata}}
 \end{figure*}
 
 
@@ -257,15 +263,13 @@ extraction. The simulation is the controlled instrument for the systematics stud
 
 \subsection{Reserved-star accuracy on real data} \label{sec:headline}
 
-On 3{,}301 test exposures and 73{,}609 reserved stars, the amortized model (no
+On 3{,}301 test exposures and 73{,}609 reserved stars, our model (no
 per-exposure fitting) matches or exceeds both baselines on every metric
-(Table~\ref{tab:headline}). Reserved ``clean'' stars carry a mild blend-contamination
-floor that suppresses absolute correlations for \emph{all} methods; the comparison is
-fair (identical stars) and the ordering is robust.
+(Table~\ref{tab:headline}). Every method is scored on the identical set of reserved stars.
 \begin{figure*}
 \centering
 \includegraphics[width=\textwidth]{figures/fig_residuals.pdf}
-\caption{Reserved-star residual distributions on the DES test split. Our amortized model (red) is the narrowest in size and ellipticity.\label{fig:residuals}}
+\caption{Reserved-star residual distributions on the DES test split. Our model (red) is the narrowest in size and ellipticity.\label{fig:residuals}}
 \end{figure*}
 
 
@@ -279,7 +283,7 @@ correlation. Best in bold.\label{tab:headline}}
 \colhead{$|\delta e_2|$} & \colhead{corr$(e_1)$} & \colhead{corr$(e_2)$} &
 \colhead{$\chi^2/$dof}}
 \startdata
-\textbf{This work} & \textbf{0.0301} & \textbf{0.0151} & \textbf{0.0150} &
+\textbf{Neural PSF (ours)} & \textbf{0.0301} & \textbf{0.0151} & \textbf{0.0150} &
   \textbf{0.650} & \textbf{0.607} & 1.037 \\
 \textsc{PIFF}      & 0.0393 & 0.0171 & 0.0158 & 0.611 & 0.577 & 1.073 \\
 \textsc{PSFEx}     & 0.0371 & 0.0160 & 0.0154 & 0.645 & 0.604 & 1.047 \\
@@ -288,12 +292,12 @@ correlation. Best in bold.\label{tab:headline}}
 
 \subsection{Pixel-level and astrometric validation} \label{sec:pixval}
 
-Because the model regresses the effective PSF---the expected pixel values---the
+Because the model regresses the effective PSF (the expected pixel values), the
 reserved-star quality of fit can be assessed directly in the modeled (pixel) space,
 the validation native to effective-PSF work \citep{AndersonKing2000}. Two checks
 follow. First, the inverse-variance $\chi^2/$dof is a noise-calibrated goodness of
 fit: at $1.04$ (Table~\ref{tab:headline}) the per-pixel residuals are consistent with
-photon and read noise, i.e.\ no unmodeled pixel-level structure---a statement available
+photon and read noise, i.e.\ no unmodeled pixel-level structure, a statement available
 to a sub-pixel model only through its rendered output. The variance is the survey's own
 inverse-weight (photon plus read noise) map, not a quantity tuned to the residuals, so
 $\chi^2\!\approx\!1$ is an independent calibration check rather than a fitted outcome.
@@ -312,7 +316,7 @@ is the median radius ($0.263''$/px). Best in bold.\label{tab:astrom}}
 \tablehead{\colhead{Method} & \colhead{$\sigma(\delta x)$ [px]} &
 \colhead{$\sigma(\delta y)$ [px]} & \colhead{median $|\delta|$ [mas]}}
 \startdata
-\textbf{This work} & \textbf{0.008} & \textbf{0.009} & \textbf{2.6} \\
+\textbf{Neural PSF (ours)} & \textbf{0.008} & \textbf{0.009} & \textbf{2.6} \\
 \textsc{PIFF}      & 0.015 & 0.013 & 4.5 \\
 \textsc{PSFEx}     & 0.015 & 0.017 & 5.1 \\
 \enddata
@@ -329,7 +333,7 @@ summaries alone.
 \centering
 \includegraphics[width=\textwidth]{figures/fig_residual_stack.pdf}
 \caption{Stacked normalized pixel residual (observed star $-$ model, unit-sum) over 306
-reserved test stars, on a common scale. Our amortized model leaves the flattest residual;
+reserved test stars, on a common scale. Our model leaves the flattest residual;
 the per-exposure baselines retain a coherent central core---a higher-order shape error
 that second-moment metrics do not capture (\S\ref{sec:pixval}).\label{fig:residstack}}
 \end{figure*}
@@ -339,23 +343,23 @@ that second-moment metrics do not capture (\S\ref{sec:pixval}).\label{fig:resids
 Per-star residuals understate the impact on weak lensing, where the
 \emph{spatially coherent} part of the PSF-modeling error sources additive shear
 bias. We therefore compute the standard $\rho$-statistics
-\citep{Rowe2010,Jarvis2016} of the reserved-star residuals---the auto- and
+\citep{Rowe2010,Jarvis2016} of the reserved-star residuals (the auto- and
 cross-correlations of the residual ellipticity $\delta e$ and the
-size-leakage term $e\,\delta_T$---accumulated within exposures with
+size-leakage term $e\,\delta_T$), accumulated within exposures with
 \textsc{treecorr} (Figure~\ref{fig:rho}). On the same reserved stars used for
-Table~\ref{tab:headline}, the amortized model is at or below both per-exposure
+Table~\ref{tab:headline}, our model is at or below both per-exposure
 baselines on four of the five statistics: the median $|\xi_+|$ across angular
 scales is $3.9\times10^{-5}$ ($\rho_1$), $5.2\times10^{-5}$ ($\rho_2$),
 $2.5\times10^{-6}$ ($\rho_3$), and $4.8\times10^{-6}$ ($\rho_4$), against
 $\rho_1,\rho_2\gtrsim7\times10^{-5}$ and $\rho_3\simeq6\times10^{-5}$ for
-\textsc{PIFF}. The strong $\rho_3$ result---more than an order of magnitude below
-\textsc{PIFF}---reflects the model's smaller and less spatially structured size
+\textsc{PIFF}. The $\rho_3$ result, more than an order of magnitude below
+\textsc{PIFF}, reflects the model's smaller and less spatially structured size
 residuals. The one exception is $\rho_5=\langle e\,(e\,\delta_T)\rangle$, where
 our model ($5.4\times10^{-5}$) sits above the baselines (${\sim}10^{-5}$): a
 residual coupling between PSF shape and the size error that a weak-lensing
 analysis would carry in its additive-bias budget. Overall the coherent,
 lensing-relevant part of the residual is no larger than that of the per-exposure
-baselines, despite the amortized model fitting no per-exposure free parameters.
+baselines, despite our model fitting no per-exposure free parameters.
 \begin{figure*}
 \centering
 \includegraphics[width=\textwidth]{figures/fig_rho_stats.pdf}
@@ -368,17 +372,19 @@ shape--size coupling) is modestly larger (\S\ref{sec:rho}).\label{fig:rho}}
 
 We test the inferential goal directly. We inject \textsc{galsim} galaxies, convolved with
 a strictly isolated reserved star's empirical PSF, at that star's position; each method
-predicts the PSF there from the \emph{other} stars and recovers the galaxy. The truth arm
-(the anchor's own image) recovers near-zero ellipticity bias, validating the protocol.
+predicts the PSF there from the \emph{other} stars and recovers the galaxy. Recovering
+with the true PSF (the anchor's own image) sets the protocol floor: near-zero ellipticity
+bias and a residual $-1.2\%$ size bias---not a true zero, but the discretization floor of
+the recovery forward model---against which the predicted PSFs are scored.
 On 32 $r$-band test exposures (170 anchors; Table~\ref{tab:galrec}), all three methods recover galaxy
 \emph{ellipticity} with low bias ($|\Delta e_1|\lesssim0.01$): the pixel-convolved
 effective PSF carries the PSF ellipticity faithfully into the forward model, so no method
-imprints a coherent shape error on the recovered galaxies---the weak-lensing-critical
+imprints a coherent shape error on the recovered galaxies, the weak-lensing-critical
 property, which our model satisfies on par with the per-exposure baselines. The methods
 separate instead on recovered \emph{size}: \textsc{PIFF} is slightly large ($+1.1\%$),
 while our recovered sizes are ${\sim}8\%$ small. This is \emph{not} a second-moment size
-error---rendered at a fiducial flux, the model's PSF size is accurate at both star and
-star-free positions (within $1\%$)---but a profile-shape effect: the model's PSF is
+error (rendered at a fiducial flux, the model's PSF size is accurate at both star and
+star-free positions, within $1\%$), but a profile-shape effect: the model's PSF is
 slightly \emph{under-concentrated}, carrying ${\sim}2\%$ less encircled energy in the
 central few pixels than the empirical PSF, which biases recovered galaxy sizes low. We
 attribute this to spectral bias of the coordinate decoder, which under-resolves the sharp
@@ -389,23 +395,23 @@ recovered ellipticity, the consequential quantity for shear, is unbiased.
 \centering
 \includegraphics[width=0.75\textwidth]{figures/fig_galrec.pdf}
 \caption{Galaxy recovery on real data (star-anchored injection), median $\pm$ bootstrap 95\%
-CI per arm. Left: recovered ellipticity is unbiased ($|\Delta e_1|\lesssim0.004$) for all
+CI per PSF. Left: recovered ellipticity is unbiased ($|\Delta e_1|\lesssim0.004$) for all
 three methods. Right: the methods separate on recovered \emph{size}---our model runs
-${\sim}8\%$ small (the PSF-core under-concentration), while \textsc{PIFF} and the truth arm
-are near zero (\S\ref{sec:galrec}).\label{fig:galrec}}
+${\sim}8\%$ small (the PSF-core under-concentration), while \textsc{PIFF} and the
+true PSF are near zero (\S\ref{sec:galrec}).\label{fig:galrec}}
 \end{figure*}
 
 
 
 \begin{deluxetable}{lccc}
 \tablecaption{Star-anchored galaxy injection--recovery (32 $r$-band test exposures, 170 anchors). The
-truth arm validates the protocol. All methods recover ellipticity with low bias; they
-separate on recovered size.\label{tab:galrec}}
-\tablehead{\colhead{Arm} & \colhead{Size bias} & \colhead{$\Delta e_1$} &
+true-PSF recovery sets the protocol floor. All methods recover ellipticity with low bias;
+they separate on recovered size.\label{tab:galrec}}
+\tablehead{\colhead{PSF} & \colhead{Size bias} & \colhead{$\Delta e_1$} &
 \colhead{$\Delta e_2$}}
 \startdata
-Truth (validation) & $-1.2\%$ & $-0.000$ & $-0.011$ \\
-\textbf{This work}  & $-7.6\%$ & $-0.001$ & $-0.008$ \\
+True PSF            & $-1.2\%$ & $-0.000$ & $-0.011$ \\
+\textbf{Neural PSF (ours)}  & $-7.6\%$ & $-0.001$ & $-0.008$ \\
 \textsc{PIFF}       & $+1.1\%$ & $-0.004$ & $-0.012$ \\
 \enddata
 \end{deluxetable}
@@ -414,14 +420,14 @@ Truth (validation) & $-1.2\%$ & $-0.000$ & $-0.011$ \\
 
 In a chromatic simulation (FWHM varies $-3\%$/mag of $g{-}i$), color conditioning reduces
 the residual chromatic size slope from $-0.06$/mag (\textsc{PIFF}, \textsc{PSFEx}, and our
-own zero-color ablation) to $+0.004$/mag---a ${\sim}17\times$ reduction. On real $r$-band
+own zero-color ablation) to $+0.004$/mag, a ${\sim}15\times$ reduction. On real $r$-band
 data the paired color-versus-zero-color slope difference is $+0.0024$/mag
-(CI $[+0.0016,+0.0030]$); the baselines structurally retain the systematic. This is
-information unavailable to a per-exposure empirical PSF.
+(CI $[+0.0016,+0.0030]$); the baselines retain the chromatic slope because a per-exposure
+empirical PSF has no access to per-star color.
 
 \subsection{Sample efficiency} \label{sec:sampeff}
 
-Restricting every method to $k$ randomly chosen fit stars, the amortized model is
+Restricting every method to $k$ randomly chosen fit stars, our model is
 approximately flat in $k$ (size scatter $0.078\to0.056$, $\chi^2\sim1.1$ from $k=5$ to
 $k=100$), while \textsc{PIFF} collapses below $k\approx25$ ($\chi^2=5.1$, scatter $0.18$
 at $k=5$). Amortization transfers information from the training set to sparsely-populated
@@ -431,7 +437,7 @@ exposures.
 \begin{figure}
 \centering
 \includegraphics[width=\columnwidth]{figures/fig_sampeff.pdf}
-\caption{Size-residual scatter versus the number of fit stars $k$. The amortized model is nearly flat in $k$; PIFF degrades sharply below $k\approx25$.\label{fig:sampeff}}
+\caption{Size-residual scatter versus the number of fit stars $k$. Our model is nearly flat in $k$; PIFF degrades sharply below $k\approx25$.\label{fig:sampeff}}
 \end{figure}
 
 \subsection{Simulation studies} \label{sec:sim}
@@ -456,24 +462,25 @@ context to point sources recovers \emph{both} components completely
 [corr$(e_1,e_2)=0.98$, matching the galaxy-free ideal]; a coordinate-system change does
 not. Galaxies are clearly distinguishable (cutout second moment $T\approx33$ versus
 $15\,{\rm px}^2$ for stars), so this is the model failing to use available information,
-fixed by the principled restriction that only point sources inform a PSF. On the real
-test set this restriction carries no accuracy cost: a point-source-context model matches
-the headline model's reserved-star residuals (size scatter $0.031$ versus $0.030$;
-identical median ellipticity error and shape correlation), confirming that the fix
-generalizes from simulation to data without trading away real-world performance.
+fixed by the principled restriction---which we adopt as the production policy---that only
+point sources inform a PSF. Excluding galaxies from the context costs nothing measurable on
+the real test set: reserved-star residuals are unchanged from the all-detections ablation
+(size scatter $0.031$ versus $0.030$; identical median ellipticity error and shape
+correlation), so the policy removes the simulation failure mode without trading away
+real-world performance.
 \begin{figure*}
 \centering
 \includegraphics[width=\textwidth]{figures/fig_galaxy_context.pdf}
 \caption{Galaxy detections in the attention context corrupt the recovered PSF ellipticity. Left: with galaxies in context, model $e_1$ collapses to a constant (corr$=-0.04$). Middle: restricting the context to point sources recovers it (corr$=0.98$). Right: shape correlations across configurations---point-source context and galaxy-free both recover \emph{both} components; a coordinate change (diagonal) does not.\label{fig:galcontext}}
 \end{figure*}
 
-\paragraph{Seed regularization: EMA versus ensembling} Amortized estimators carry
-seed-to-seed prediction noise. On the star-free truth grid we compare a single model,
+\paragraph{Seed regularization: EMA versus ensembling} Because the field is learned once
+and applied without per-exposure refitting, it carries seed-to-seed prediction noise. On the star-free truth grid we compare a single model,
 an exponential moving average (EMA) of one model's weights, and a 4-seed deep ensemble
 (averaging predicted stamps), each over matched 120-epoch runs (Table~\ref{tab:ema}).
-EMA gives a small, consistent gain ($T$-scatter $-5\%$, ellipticity $\lesssim2\%$); the
+EMA gives a small, consistent gain ($T$-scatter $-5\%$, ellipticity $\lesssim3\%$); the
 ensemble is much larger ($-12\%$ size, $-24\%$ ellipticity). EMA is therefore \emph{not}
-a substitute for ensembling---it captures only a fraction of the benefit. The per-seed
+a substitute for ensembling: it captures only a fraction of the benefit. The per-seed
 aggregate scatter is itself small (the model is seed-stable), but the per-position
 predictions are diverse, which only ensembling exploits. On real reserved stars the
 ensemble improves the metrics by only ${\sim}1\%$: that residual is measurement-noise- and
@@ -494,13 +501,13 @@ ensemble ($4\times$) & \textbf{0.0073} & \textbf{0.0075} & \textbf{0.0154} \\
 
 \section{Discussion} \label{sec:discussion}
 
-The amortized field trades a per-exposure fit for a single trained model. Benefits: no
+Our amortized approach trades a per-exposure fit for a single trained model. Benefits: no
 test-time fitting, robustness in star-sparse exposures, conditioning on color
-(chromatic PSF) and flux (brighter--fatter), and a directly forward-modelable output---we
+(chromatic PSF) and flux (brighter--fatter), and a directly forward-modelable output: we
 predict the pixel-convolved effective PSF, the identifiable quantity the data constrain
 and the exact kernel a galaxy model is convolved with (\S\ref{sec:intro}), so the PSF
 feeds a shear pipeline with no intervening pixel-deconvolution assumption. Caveats: (i)~unlike per-exposure fitters, the
-amortized model requires many exposures to learn the field (in simulation, ellipticity
+our approach requires many exposures to learn the field (in simulation, ellipticity
 recovery is unstable below a few thousand exposures; real DES is well above this);
 (ii)~the simulation's idealized PSF (Moffat, low-order polynomial field) favors the
 per-exposure baselines, so absolute-accuracy comparisons rest on real data; and
@@ -509,14 +516,12 @@ point sources, which we adopt. (iv)~The model slightly \emph{under-concentrates}
 core: rendered at a fiducial flux its second-moment size is accurate, but it carries
 ${\sim}2\%$ less encircled energy in the central few pixels than the empirical PSF, which
 biases recovered galaxy sizes ${\sim}8\%$ low (\S\ref{sec:galrec}). We attribute this to
-spectral bias of the coordinate decoder---MLP decoders preferentially fit smooth
-functions and under-resolve sharp peaks. We verify this is the cause and is tractable:
-widening the decoder's Fourier frequency basis nearly eliminates the core deficit
-(${\sim}2\%\to0.1\%$ encircled-energy residual at $r{=}2$\,px) and cuts the galaxy-size
-bias by ${\sim}30\%$ (to ${\sim}5\%$), at a small cost to reserved-star ellipticity
-scatter---so a clean fix that improves the core without that cost (a tuned frequency
-schedule, or sinusoidal-activation decoders) is a tractable refinement rather than an open
-question. It is the main residual systematic to address before a shear analysis. A separate, milder effect appears only in the
+spectral bias of the coordinate decoder: a multilayer-perceptron decoder preferentially fits smooth
+functions and under-resolves sharp peaks. Widening the decoder's Fourier frequency basis
+nearly eliminates the core deficit (${\sim}2\%\to0.1\%$ encircled-energy residual at
+$r{=}2$\,px) and cuts the galaxy-size bias by ${\sim}30\%$ (to ${\sim}5\%$), at a small cost
+to reserved-star ellipticity scatter; a tuned frequency schedule or a sinusoidal-activation
+decoder is a plausible route to the core correction without that cost. It is the main residual systematic to address before a shear analysis. A separate, milder effect appears only in the
 reserved-star metric (Fig.~\ref{fig:residmag}): evaluated at each star's \emph{own} flux,
 $\delta T/T$ rises to ${\sim}{+}1.2\%$ at faint magnitudes, a spurious flux--size trend in
 the conditioning; because the inferential PSF is rendered at a fiducial flux, this does not
@@ -527,10 +532,10 @@ propagate to galaxy measurement.
 A single attention-based continuous PSF field, trained across DES single-epoch exposures
 and applied with no per-exposure fitting, matches or exceeds \textsc{PIFF} and
 \textsc{PSFEx} on real reserved stars and recovers galaxy ellipticity without coherent
-bias---on par with \textsc{PIFF}---on a star-anchored injection test, while additionally
+bias (on par with \textsc{PIFF}) on a star-anchored injection test, while additionally
 correcting a chromatic systematic and remaining robust in star-sparse exposures. Controlled simulations motivate
-two training choices---a blend forward-model loss and point-source-only attention
-context---the latter from a clean diagnosis of a spin-2 representation failure triggered
+two training choices: a blend forward-model loss and point-source-only attention
+context. The latter follows from diagnosing a spin-2 representation failure triggered
 by galaxy detections in context.
 
 \begin{acknowledgments}
@@ -557,7 +562,12 @@ funded by UK BEIS National E-infrastructure capital grants; and the UK
 particle physics grid, supported by the GridPP Collaboration.  This
 work was performed in part under DOE Contract DE-AC02-76SF00515.
 
-% TODO: DES data-use acknowledgment (the standard DES public-data statement) -- pending text.
+This project used public archival data from the Dark Energy Survey (DES). Funding for the DES Projects has been provided by the U.S. Department of Energy, the U.S. National Science Foundation, the Ministry of Science and Education of Spain, the Science and Technology FacilitiesCouncil of the United Kingdom, the Higher Education Funding Council for England, the National Center for Supercomputing Applications at the University of Illinois at Urbana-Champaign, the Kavli Institute of Cosmological Physics at the University of Chicago, the Center for Cosmology and Astro-Particle Physics at the Ohio State University, the Mitchell Institute for Fundamental Physics and Astronomy at Texas A\&M University, Financiadora de Estudos e Projetos, Funda{\c c}{\~a}o Carlos Chagas Filho de Amparo {\`a} Pesquisa do Estado do Rio de Janeiro, Conselho Nacional de Desenvolvimento Cient{\'i}fico e Tecnol{\'o}gico and the Minist{\'e}rio da Ci{\^e}ncia, Tecnologia e Inova{\c c}{\~a}o, the Deutsche Forschungsgemeinschaft, and the Collaborating Institutions in the Dark Energy Survey.
+
+The Collaborating Institutions are Argonne National Laboratory, the University of California at Santa Cruz, the University of Cambridge, Centro de Investigaciones Energ{\'e}ticas, Medioambientales y Tecnol{\'o}gicas-Madrid, the University of Chicago, University College London, the DES-Brazil Consortium, the University of Edinburgh, the Eidgen{\"o}ssische Technische Hochschule (ETH) Z{\"u}rich,  Fermi National Accelerator Laboratory, the University of Illinois at Urbana-Champaign, the Institut de Ci{\`e}ncies de l'Espai (IEEC/CSIC), the Institut de F{\'i}sica d'Altes Energies, Lawrence Berkeley National Laboratory, the Ludwig-Maximilians Universit{\"a}t M{\"u}nchen and the associated Excellence Cluster Universe, the University of Michigan, the National Optical Astronomy Observatory, the University of Nottingham, The Ohio State University, the OzDES Membership Consortium, the University of Pennsylvania, the University of Portsmouth, SLAC National Accelerator Laboratory, Stanford University, the University of Sussex, and Texas A\&M University.
+
+Based in part on observations at Cerro Tololo Inter-American Observatory, National Optical Astronomy Observatory, which is operated by the Association of Universities for Research in Astronomy (AURA) under a cooperative agreement with the National Science Foundation.
+
 
 Baselines: \textsc{PIFF} (PixelGrid,
 second-order \texttt{BasisPolynomial}, $4\sigma$ rejection) and \textsc{PSFEx}
@@ -576,10 +586,10 @@ PyTorch \citep{Paszke2019}, PIFF \citep{Jarvis2021}, PSFEx \citep{Bertin2011}}
 Figure~\ref{fig:selection} shows a region of a real DES single-epoch $r$-band exposure
 with the source selection overlaid: clean stars used for fitting and scoring (green),
 held-out reserved stars (blue), and additional context-only stellar detections (orange).
-Galaxies (the extended sources, e.g.\ the bright object near the center) are detected but,
-under the point-source-context policy (\S\ref{sec:method}), are not attended to.
+Galaxies (the extended sources, e.g.\ the bright object near the center) are detected but
+excluded from the attention context (\S\ref{sec:method}).
 Figure~\ref{fig:psfcompare} compares, for a single high-S/N reserved test star, the
-observed stamp against the PSFEx, PIFF, and ImplicitPSF models evaluated at that position
+observed stamp against the PSFEx, PIFF, and Neural PSF models evaluated at that position
 (each method having seen only the non-reserved stars). All three reproduce the stellar
 profile; PIFF's per-exposure interpolation is visibly noisier in the wings.
 
@@ -594,9 +604,10 @@ Extended sources (galaxies) are excluded from the attention context.\label{fig:s
 \begin{figure*}
 \centering
 \includegraphics[width=\textwidth]{figures/fig_psf_comparison.pdf}
-\caption{The same reserved test star (left, observed) and the PSF predicted at its
-position by PSFEx, PIFF, and ImplicitPSF. Each model was fit/conditioned on the
-non-reserved stars only. Common linear stretch.\label{fig:psfcompare}}
+\caption{Top: the same reserved test star (left, observed) and the PSF predicted at its
+position by PSFEx, PIFF, and Neural PSF, on a common linear stretch. Bottom: the residual
+(observed $-$ model) for each method, on a common diverging scale. Each model was
+fit/conditioned on the non-reserved stars only.\label{fig:psfcompare}}
 \end{figure*}
 
 
@@ -604,10 +615,8 @@ non-reserved stars only. Common linear stretch.\label{fig:psfcompare}}
 
 For comparison with standard per-exposure PSF validation \citep[cf.][]{Jarvis2021}, we report the same diagnostics.
 
-Table~\ref{tab:perband} breaks the headline metrics down by band. The amortized
-model has the smallest size scatter and median ellipticity error in every band,
-with the largest margins in $Y$ and $z$, where the broader, more variable PSF is
-hardest for per-exposure fits.
+Table~\ref{tab:perband} breaks the metrics down by band. Our
+model has the smallest size scatter and median ellipticity error in every band.
 
 \begin{deluxetable}{llccc}
 \tablecaption{Reserved-star residuals by band (test split). $T$ scatter is the
@@ -617,23 +626,23 @@ bold.\label{tab:perband}}
 \tablehead{\colhead{Band} & \colhead{Method} & \colhead{$T$ scat} &
 \colhead{$|\delta e_1|$} & \colhead{corr$(e_1)$}}
 \startdata
-$g$ & \textbf{This work} & \textbf{0.0331} & \textbf{0.0164} & \textbf{0.475} \\
+$g$ & \textbf{Neural PSF (ours)} & \textbf{0.0331} & \textbf{0.0164} & \textbf{0.475} \\
     & \textsc{PIFF}  & 0.0439 & 0.0188 & 0.448 \\
     & \textsc{PSFEx} & 0.0417 & 0.0173 & 0.473 \\
 \hline
-$r$ & \textbf{This work} & \textbf{0.0291} & \textbf{0.0144} & \textbf{0.576} \\
+$r$ & \textbf{Neural PSF (ours)} & \textbf{0.0291} & \textbf{0.0144} & \textbf{0.576} \\
     & \textsc{PIFF}  & 0.0366 & 0.0164 & 0.535 \\
     & \textsc{PSFEx} & 0.0340 & 0.0151 & 0.572 \\
 \hline
-$i$ & \textbf{This work} & \textbf{0.0274} & \textbf{0.0136} & \textbf{0.643} \\
+$i$ & \textbf{Neural PSF (ours)} & \textbf{0.0274} & \textbf{0.0136} & \textbf{0.643} \\
     & \textsc{PIFF}  & 0.0342 & 0.0155 & 0.605 \\
     & \textsc{PSFEx} & 0.0339 & 0.0144 & 0.637 \\
 \hline
-$z$ & \textbf{This work} & \textbf{0.0272} & \textbf{0.0140} & \textbf{0.601} \\
+$z$ & \textbf{Neural PSF (ours)} & \textbf{0.0272} & \textbf{0.0140} & \textbf{0.601} \\
     & \textsc{PIFF}  & 0.0387 & 0.0160 & 0.503 \\
     & \textsc{PSFEx} & 0.0359 & 0.0152 & 0.589 \\
 \hline
-$Y$ & \textbf{This work} & \textbf{0.0391} & \textbf{0.0210} & \textbf{0.568} \\
+$Y$ & \textbf{Neural PSF (ours)} & \textbf{0.0391} & \textbf{0.0210} & \textbf{0.568} \\
     & \textsc{PIFF}  & 0.0513 & 0.0226 & 0.523 \\
     & \textsc{PSFEx} & 0.0449 & 0.0221 & 0.550 \\
 \enddata
@@ -642,7 +651,7 @@ $Y$ & \textbf{This work} & \textbf{0.0391} & \textbf{0.0210} & \textbf{0.568} \\
 \begin{figure*}
 \centering
 \includegraphics[width=\textwidth]{figures/fig_spatial_residuals.pdf}
-\caption{Median ImplicitPSF residuals binned across the CCD (cf.\ PIFF Fig.~9).\label{fig:spatialres}}
+\caption{Median Neural PSF residuals binned across the CCD (cf.\ PIFF Fig.~9).\label{fig:spatialres}}
 \end{figure*}
 
 \begin{figure}
@@ -660,7 +669,7 @@ $Y$ & \textbf{This work} & \textbf{0.0391} & \textbf{0.0210} & \textbf{0.568} \\
 \begin{figure*}
 \centering
 \includegraphics[width=\textwidth]{figures/fig_whisker_resid.pdf}
-\caption{Residual PSF-ellipticity whiskers across the CCD, ImplicitPSF and PIFF (cf.\ PIFF Fig.~2).\label{fig:whisker}}
+\caption{Residual PSF-ellipticity whiskers across the CCD, Neural PSF and PIFF (cf.\ PIFF Fig.~2).\label{fig:whisker}}
 \end{figure*}
 
 \clearpage  % flush pending appendix floats so all figures place and their labels resolve
