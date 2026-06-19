@@ -103,7 +103,7 @@ class PSFDecoder(nn.Module):
             # with a large core it must tame -- a large initial core optimizes very poorly
             # (val started ~12 and plateaued ~3.2, vs ~2.2 for the other candidates).
             self.core_head.weight.data.mul_(0.1)
-            self.core_head.bias.data[0] = 0.0   # log_sigma -> ~1 px core width
+            self.core_head.bias.data[0] = 0.0  # log_sigma -> ~1 px core width
             self.core_head.bias.data[1] = -4.0  # log_amp   -> tiny initial core
 
         if polar_coords:
@@ -261,7 +261,7 @@ class ImplicitPSF(pl.LightningModule):
         galaxy_mode="exclude",
         chi2_cap=None,
         blend_max_targets=None,
-        point_source_context=False,
+        point_source_context=True,
     ):
         super().__init__()
         self.save_hyperparameters()

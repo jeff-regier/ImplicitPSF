@@ -202,8 +202,10 @@ def parse_args():
     )
     parser.add_argument(
         "--point-source-context",
-        action="store_true",
-        help="attend only to point sources (stars) as context; gate out galaxies",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="attend only to point sources (stars) as context; gate out galaxies "
+        "(production design; --no-point-source-context restores the galaxies-in-context ablation)",
     )
     parser.add_argument("--context-dropout-max", type=float, default=0.5)
     parser.add_argument("--no-attention", action="store_true")
