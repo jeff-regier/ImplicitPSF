@@ -98,6 +98,13 @@ class PSFDecoder(nn.Module):
             # added to the decoder output: the sharp central cusp the MLP under-resolves is
             # then correct by construction and the network models only the broader residual.
             self.core_head = nn.Linear(feature_dim, 2)
+            # Start the core NEGLIGIBLE (amp ~ e^-4 ~ 0.02, width ~1 px) so the model begins
+            # at the no-core (baseline) solution and grows a small core, rather than starting
+            # with a large core it must tame -- a large initial core optimizes very poorly
+            # (val started ~12 and plateaued ~3.2, vs ~2.2 for the other candidates).
+            self.core_head.weight.data.mul_(0.1)
+            self.core_head.bias.data[0] = 0.0   # log_sigma -> ~1 px core width
+            self.core_head.bias.data[1] = -4.0  # log_amp   -> tiny initial core
 
         if polar_coords:
             # radial Fourier features times angular harmonics: ellipticity is spin-2,
