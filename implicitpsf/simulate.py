@@ -27,7 +27,28 @@ WIDTH, HEIGHT = 2048, 4096  # real DES CCD 31 dimensions (was a 1024x2048 quarte
 PATCH = 32
 NOISE_SIGMA = 20.0  # realistic sky noise: gives star SNR p50~54, galaxy SNR p50~14 (match DES)
 MOFFAT_BETA = 2.5
+_PSF_MODEL = {"name": "moffat"}  # mutable holder (fork workers inherit it); avoids a global stmt
 N_STARS_RANGE = (90, 150)  # ~99 clean stars/exposure to match real density over the full CCD
+
+
+def set_psf_model(name):
+    """Select the atmospheric PSF model ('moffat' or 'kolmogorov'); call before generation
+    AND in any truth eval (sim_truth/galaxy_recovery) so the truth PSF matches the sim."""
+    assert name in ("moffat", "kolmogorov")
+    _PSF_MODEL["name"] = name
+
+
+def psf_profile(fwhm_pixels, flux=1.0):
+    """Atmospheric PSF at the given FWHM. Moffat is a soft-cored fitting function (too soft
+    to exhibit the real PSF-core under-concentration deficit); Kolmogorov is the physical
+    ground-based-turbulence model, sharper-cored, used to reproduce that deficit on a clean
+    simulation truth grid (W3 sharp-core testbed)."""
+    fwhm_arcsec = fwhm_pixels * PIXEL_SCALE
+    if _PSF_MODEL["name"] == "kolmogorov":
+        return galsim.Kolmogorov(fwhm=fwhm_arcsec, flux=flux)
+    return galsim.Moffat(beta=MOFFAT_BETA, fwhm=fwhm_arcsec, flux=flux)
+
+
 FLUX_RANGE = (2e3, 6e5)  # real clean-star flux p10-p90 ~7e3-5e5 (bright tail matters)
 FWHM_BASE_RANGE = (2.6, 5.4)  # pixels, per-exposure seeing
 FWHM_VARIATION = 0.15  # fractional field variation
@@ -94,8 +115,7 @@ def sample_field(rng, chromatic=False):
 
 def render_star(image, field, x, y, flux, color):
     fwhm, g1, g2 = true_psf_params(field, x, y, color)
-    profile = galsim.Moffat(beta=MOFFAT_BETA, fwhm=fwhm * PIXEL_SCALE, flux=flux)
-    profile = profile.shear(g1=g1, g2=g2)
+    profile = psf_profile(fwhm, flux).shear(g1=g1, g2=g2)
     stamp = profile.drawImage(
         nx=PATCH * 2,
         ny=PATCH * 2,
@@ -114,7 +134,7 @@ def render_galaxy(image, field, x, y, flux, color, re_pix, sersic_n, g1_gal, g2_
     component) be selected on simulations where the star truth is known exactly.
     """
     fwhm, g1_psf, g2_psf = true_psf_params(field, x, y, color)
-    psf = galsim.Moffat(beta=MOFFAT_BETA, fwhm=fwhm * PIXEL_SCALE).shear(g1=g1_psf, g2=g2_psf)
+    psf = psf_profile(fwhm).shear(g1=g1_psf, g2=g2_psf)
     galaxy = galsim.Sersic(n=sersic_n, half_light_radius=re_pix * PIXEL_SCALE, flux=flux)
     galaxy = galaxy.shear(g1=g1_gal, g2=g2_gal)
     profile = galsim.Convolve([galaxy, psf])
@@ -379,7 +399,14 @@ def main():
         default=0.0,
         help="inject this many galaxy detections (star_type=2) per star",
     )
+    parser.add_argument(
+        "--psf-model",
+        default="moffat",
+        choices=["moffat", "kolmogorov"],
+        help="atmospheric PSF model; kolmogorov is sharper-cored (W3 sharp-core testbed)",
+    )
     args = parser.parse_args()
+    set_psf_model(args.psf_model)
 
     Path(args.out_dir).mkdir(parents=True, exist_ok=True)
     Path(args.fits_dir).mkdir(parents=True, exist_ok=True)

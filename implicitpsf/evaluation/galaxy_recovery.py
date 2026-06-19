@@ -36,6 +36,8 @@ from implicitpsf.simulate import (
     NOISE_SIGMA,
     PATCH,
     WIDTH,
+    psf_profile,
+    set_psf_model,
     true_psf_params,
 )
 from implicitpsf.splits import load_manifest, reserved_star_ids
@@ -75,7 +77,7 @@ def sample_galaxies(rng, n_gal):
 def inject_stamp(rng, field, x, y, gal):
     """Noisy galaxy stamp rendered entirely by galsim (independent of our fitter)."""
     fwhm, g1, g2 = true_psf_params(field, float(x), float(y), 0.0)
-    psf = galsim.Moffat(beta=MOFFAT_BETA, fwhm=fwhm * PIXEL_SCALE).shear(g1=g1, g2=g2)
+    psf = psf_profile(fwhm).shear(g1=g1, g2=g2)
     q = np.exp(-np.hypot(gal["eta1"], gal["eta2"]))
     beta = 0.5 * np.arctan2(gal["eta2"], gal["eta1"])
     profile = galsim.Sersic(
@@ -108,7 +110,7 @@ def truth_kernels(field, x, y, grid):
     for x0, y0 in zip(x, y, strict=True):
         fwhm, g1, g2 = true_psf_params(field, float(x0), float(y0), 0.0)
         profile = galsim.Convolve(
-            galsim.Moffat(beta=MOFFAT_BETA, fwhm=fwhm * PIXEL_SCALE).shear(g1=g1, g2=g2),
+            psf_profile(fwhm).shear(g1=g1, g2=g2),
             galsim.Pixel(PIXEL_SCALE),
         )
         kernels.append(lattice_kernel(profile, grid))
@@ -254,6 +256,10 @@ def eval_file_group(args, file_name, exposures):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--psf-model", default="moffat", choices=["moffat", "kolmogorov"],
+        help="must match the PSF model the sim was generated with",
+    )
     parser.add_argument("--manifest", default="manifests/sim_split_v1.json")
     parser.add_argument("--data-dir", default="/data/scratch/regier/sim_psf_stars")
     parser.add_argument("--checkpoint", default="checkpoints/sim_v5_long/best.pt")
@@ -265,6 +271,7 @@ def main():
         "--free-n", action="store_true", help="fit the Sersic index instead of fixing to truth"
     )
     args = parser.parse_args()
+    set_psf_model(args.psf_model)
 
     manifest = load_manifest(args.manifest)
     selected = [

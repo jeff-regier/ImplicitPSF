@@ -27,7 +27,15 @@ from implicitpsf.evaluation.moments import PIXEL_SCALE, hsm_moments
 from implicitpsf.evaluation.run_eval import exposure_masks
 from implicitpsf.provenance import write_result
 from implicitpsf.render import render_at
-from implicitpsf.simulate import COLOR_MEAN, HEIGHT, MOFFAT_BETA, PATCH, WIDTH, true_psf_params
+from implicitpsf.simulate import (
+    COLOR_MEAN,
+    HEIGHT,
+    PATCH,
+    WIDTH,
+    psf_profile,
+    set_psf_model,
+    true_psf_params,
+)
 from implicitpsf.splits import load_manifest, reserved_star_ids
 
 
@@ -49,8 +57,7 @@ def truth_stamps(field, x, y, color):
     stamps = np.zeros((len(x), PATCH, PATCH))
     for index, (x0, y0) in enumerate(zip(x, y, strict=True)):
         fwhm, g1, g2 = true_psf_params(field, float(x0), float(y0), color)
-        profile = galsim.Moffat(beta=MOFFAT_BETA, fwhm=fwhm * PIXEL_SCALE)
-        profile = profile.shear(g1=g1, g2=g2)
+        profile = psf_profile(fwhm).shear(g1=g1, g2=g2)
         corner_x = round(float(x0)) - half + 1  # 1-based stamp corner
         corner_y = round(float(y0)) - half + 1
         bounds = galsim.BoundsI(corner_x, corner_x + PATCH - 1, corner_y, corner_y + PATCH - 1)
@@ -190,7 +197,12 @@ def main():
         default=["implicit", "piff", "psfex"],
         choices=["implicit", "piff", "psfex"],
     )
+    parser.add_argument(
+        "--psf-model", default="moffat", choices=["moffat", "kolmogorov"],
+        help="must match the PSF model the sim was generated with",
+    )
     args = parser.parse_args()
+    set_psf_model(args.psf_model)
 
     manifest = load_manifest(args.manifest)
     selected = [
