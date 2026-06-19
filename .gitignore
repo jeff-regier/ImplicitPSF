@@ -35,21 +35,16 @@ des_directories.txt
 .ruff_cache/
 results/morning_report/.REPORT.md.swp
 results/real_test_baselines.parquet
-# LaTeX build artifacts
-paper/*.aux
-paper/*.log
-paper/*.out
-paper/*.blg
-paper/*.bbl
-
 # LaTeX build artifacts + vendored AAS class (re-fetch from CTAN: macros/latex/contrib/aastex.zip)
-paper/*.aux
-paper/*.log
-paper/*.out
-paper/*.blg
-paper/*.bbl
-paper/aastex701.cls
-paper/aasjournalv7.bst
+manuscript/*.aux
+manuscript/*.log
+manuscript/*.out
+manuscript/*.blg
+manuscript/*.bbl
+manuscript/*.fdb_latexmk
+manuscript/*.fls
+manuscript/aastex701.cls
+manuscript/aasjournalv7.bst
 
 # Provenance run dirs are local scratch; results/INDEX.jsonl (committed) +
 # parquet-embedded provenance are the durable record.

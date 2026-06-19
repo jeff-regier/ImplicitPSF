@@ -4,7 +4,7 @@ For a sample of test exposures with on-disk FITS, render each method's PSF at th
 reserved stars, normalize observed and model stamps to unit sum (the effective-PSF
 "fraction of light per pixel"), and stack the mean residual. A model that has captured
 the effective PSF leaves a structureless residual; coherent structure is a shape error
-that second-moment metrics can miss. Outputs a vector PDF to paper/figures/.
+that second-moment metrics can miss. Outputs a vector PDF to manuscript/figures/.
 """
 
 import glob
@@ -29,7 +29,7 @@ plt.rcParams.update(
     {"font.size": 9, "font.family": "serif", "figure.dpi": 150, "savefig.bbox": "tight"}
 )
 
-FIGDIR = "paper/figures"
+FIGDIR = "manuscript/figures"
 DATA_DIR = "/data/scratch/regier/sep_des_stars_v2"
 MANIFEST = "manifests/split_v1.json"
 CHECKPOINT = "checkpoints/real_v6_blend/best.pt"

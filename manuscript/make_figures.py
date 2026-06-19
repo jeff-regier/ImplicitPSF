@@ -1,6 +1,6 @@
 """Generate the AJ manuscript figures from the frozen results and simulation data.
 
-Outputs vector PDFs to paper/figures/. Each figure is a standalone function so the
+Outputs vector PDFs to manuscript/figures/. Each figure is a standalone function so the
 set can be regenerated against a new checkpoint by re-running this script.
 """
 
@@ -23,7 +23,7 @@ plt.rcParams.update(
     }
 )
 
-FIGDIR = "paper/figures"
+FIGDIR = "manuscript/figures"
 SIM_PT = sorted(glob.glob("/data/scratch/regier/sim_realdens6k_stars/*.pt"))[0]
 HEADLINE = "results/real_test_v6_blend_allmethods.parquet"
 GALREC = "results/galaxy_recovery_real_v6_blend.parquet"

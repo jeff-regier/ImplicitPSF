@@ -1,6 +1,6 @@
 """Appendix figures: (A1) a real DES image with the star-selection boxes overlaid, and
 (A2) one validation star shown beside the PSFEx, PIFF, and Neural PSF models at its
-position. Outputs vector PDFs to paper/figures/.
+position. Outputs vector PDFs to manuscript/figures/.
 """
 
 import glob
@@ -28,7 +28,7 @@ plt.rcParams.update(
     {"font.size": 9, "font.family": "serif", "figure.dpi": 150, "savefig.bbox": "tight"}
 )
 
-FIGDIR = "paper/figures"
+FIGDIR = "manuscript/figures"
 DATA_DIR = "/data/scratch/regier/sep_des_stars_v2"
 MANIFEST = "manifests/split_v1.json"
 CHECKPOINT = "checkpoints/real_v6_blend/best.pt"

@@ -1,7 +1,7 @@
 """Benchmark-standard PSF validation figures (matching PIFF, Jarvis+2021): rho-statistics,
 spatial residual maps, residuals vs magnitude (brighter-fatter), residuals vs color (DCR),
 and residual-ellipticity whiskers. All from the frozen real-data results; outputs vector
-PDFs to paper/figures/.
+PDFs to manuscript/figures/.
 """
 
 import matplotlib.pyplot as plt
@@ -13,7 +13,7 @@ plt.rcParams.update(
     {"font.size": 9, "font.family": "serif", "figure.dpi": 150, "savefig.bbox": "tight"}
 )
 
-FIGDIR = "paper/figures"
+FIGDIR = "manuscript/figures"
 HEADLINE = "results/real_test_v6_blend_allmethods.parquet"
 METHOD_LABEL = {"implicit": "Neural PSF", "piff": "PIFF", "psfex": "PSFEx"}
 METHOD_COLOR = {"implicit": "C3", "piff": "C0", "psfex": "C1"}
