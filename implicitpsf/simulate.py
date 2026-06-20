@@ -15,6 +15,7 @@ import multiprocessing as mp
 from pathlib import Path
 
 import galsim
+import galsim.des
 import numpy as np
 import torch
 from astropy.io import fits
@@ -39,7 +40,7 @@ N_STARS_RANGE = (90, 150)  # ~99 clean stars/exposure to match real density over
 def set_psf_model(name):
     """Select the PSF model ('moffat', 'kolmogorov', or 'realistic'); call before generation
     AND in any truth eval (sim_truth/galaxy_recovery) so the truth PSF matches the sim."""
-    assert name in ("moffat", "kolmogorov", "realistic")
+    assert name in ("moffat", "kolmogorov", "realistic", "empirical")
     _PSF_MODEL["name"] = name
 
 
@@ -61,6 +62,26 @@ def psf_profile(fwhm_pixels, flux=1.0):
         ),
     }
     return builders[_PSF_MODEL["name"]]()
+
+
+# 'empirical' PSF mode: the truth PSF is a real fitted PSFEx model (genuine DECam morphology --
+# optical aberrations, diffraction -- which the analytic models lack). Tests whether the decoder
+# under-fits real PSF STRUCTURE (the leading explanation for the -7.6% real-data galaxy deficit
+# that does NOT appear on smooth-PSF sims). Spatially varying via DES_PSFEx.getPSF(position).
+_EMPIRICAL = {"des": None}
+
+
+def set_empirical_psf(psfex_path, fits_path):
+    _EMPIRICAL["des"] = galsim.des.DES_PSFEx(str(psfex_path), image_file_name=str(fits_path))
+
+
+def local_psf(field, x, y, color, flux=1.0):
+    """Unit-or-flux-scaled PSF profile at a position: real PSFEx model in 'empirical' mode,
+    else the analytic profile with the field's FWHM/shear variation."""
+    if _PSF_MODEL["name"] == "empirical":
+        return _EMPIRICAL["des"].getPSF(galsim.PositionD(x + 1.0, y + 1.0)) * flux
+    fwhm, g1, g2 = true_psf_params(field, x, y, color)
+    return psf_profile(fwhm, flux).shear(g1=g1, g2=g2)
 
 
 FLUX_RANGE = (2e3, 6e5)  # real clean-star flux p10-p90 ~7e3-5e5 (bright tail matters)
@@ -128,8 +149,7 @@ def sample_field(rng, chromatic=False):
 
 
 def render_star(image, field, x, y, flux, color):
-    fwhm, g1, g2 = true_psf_params(field, x, y, color)
-    profile = psf_profile(fwhm, flux).shear(g1=g1, g2=g2)
+    profile = local_psf(field, x, y, color, flux)
     stamp = profile.drawImage(
         nx=PATCH * 2,
         ny=PATCH * 2,
@@ -147,8 +167,7 @@ def render_galaxy(image, field, x, y, flux, color, re_pix, sersic_n, g1_gal, g2_
     misspecified point sources, so they let the galaxy-handling modes (exclude/mask/
     component) be selected on simulations where the star truth is known exactly.
     """
-    fwhm, g1_psf, g2_psf = true_psf_params(field, x, y, color)
-    psf = psf_profile(fwhm).shear(g1=g1_psf, g2=g2_psf)
+    psf = local_psf(field, x, y, color, 1.0)
     galaxy = galsim.Sersic(n=sersic_n, half_light_radius=re_pix * PIXEL_SCALE, flux=flux)
     galaxy = galaxy.shear(g1=g1_gal, g2=g2_gal)
     profile = galsim.Convolve([galaxy, psf])
