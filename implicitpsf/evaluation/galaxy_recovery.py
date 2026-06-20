@@ -105,6 +105,16 @@ def lattice_kernel(profile, grid):
     return vals / vals.sum() * OVERSAMPLE**2
 
 
+def _as_interpolated(profile):
+    """Render to a fine InterpolatedImage so lattice_kernel's xValue point-sampling works for
+    non-analytic PSFs: Kolmogorov (and Kolmogorov-based 'realistic') have no real-space form, so
+    xValue on Convolve(Kolmogorov, ...) raises. drawImage uses FFT; the InterpolatedImage of the
+    fine render is xValue-able and centered identically (lossless at this oversampling)."""
+    fine = PATCH * OVERSAMPLE
+    img = profile.drawImage(nx=fine, ny=fine, scale=PIXEL_SCALE / OVERSAMPLE, method="no_pixel")
+    return galsim.InterpolatedImage(img, x_interpolant="lanczos15", normalization="flux")
+
+
 def truth_kernels(field, x, y, grid):
     kernels = []
     for x0, y0 in zip(x, y, strict=True):
@@ -113,7 +123,7 @@ def truth_kernels(field, x, y, grid):
             psf_profile(fwhm).shear(g1=g1, g2=g2),
             galsim.Pixel(PIXEL_SCALE),
         )
-        kernels.append(lattice_kernel(profile, grid))
+        kernels.append(lattice_kernel(_as_interpolated(profile), grid))
     return np.stack(kernels)
 
 
@@ -231,6 +241,9 @@ def evaluate_exposure(model, data, index, reserved_ids, workdir, n_gal, free_n):
 def eval_file_group(args, file_name, exposures):
     """Evaluate one data file's selected test exposures (one worker task)."""
     torch.set_num_threads(1)
+    set_psf_model(args.psf_model)  # spawn workers re-import simulate.py -> _PSF_MODEL resets to
+    # 'moffat'; without this the truth arm + galaxy injection silently use Moffat while PIFF (from
+    # the FITS) and the model use the real sim PSF -> spurious ~+37% galaxy-size mismatch.
     manifest = load_manifest(args.manifest)
     model = load_model(args.checkpoint)
     data = load_exposure_file(Path(args.data_dir) / file_name)
