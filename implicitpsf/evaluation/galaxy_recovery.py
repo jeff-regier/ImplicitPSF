@@ -22,7 +22,7 @@ import torch
 
 from implicitpsf.baselines.catalogs import write_piff_catalog
 from implicitpsf.baselines.implicit_runner import load_model
-from implicitpsf.baselines.piff_runner import fit_piff
+from implicitpsf.baselines.piff_runner import fit_piff, render_piff
 from implicitpsf.blend import sample_grid
 from implicitpsf.datasets import load_exposure_file, make_batch, stable_seed
 from implicitpsf.evaluation.galaxy_fit import OVERSAMPLE, fit_galaxies
@@ -118,13 +118,16 @@ def truth_kernels(field, x, y, grid):
 
 
 def piff_kernels(psf, x, y, grid):
-    """PIFF kernels via get_profile; the returned method says whether the profile
-    already includes the pixel response ('no_pixel') or not ('auto')."""
+    """PIFF kernels rendered WCS-aware via ``render_piff`` (identical to the fixed
+    ``galaxy_recovery_real`` path), then wrapped as an InterpolatedImage and resampled on the
+    fine lattice exactly as the truth arm. The old ``psf.get_profile`` path returned the model
+    in PIFF's sky frame and mis-sized the kernel on the sim (the W1 bug, never ported here);
+    that produced a spurious ~+37% galaxy-size bias for the PIFF arm."""
+    stamps = render_piff(psf, x, y, patch_size=PATCH)  # (n, PATCH, PATCH), WCS applied
     kernels = []
-    for x0, y0 in zip(x, y, strict=True):
-        profile, method = psf.get_profile(x=round(float(x0)) + 1.0, y=round(float(y0)) + 1.0)
-        if method == "auto":
-            profile = galsim.Convolve(profile, galsim.Pixel(PIXEL_SCALE))
+    for stamp in stamps:
+        image = galsim.Image(np.ascontiguousarray(stamp), scale=PIXEL_SCALE)
+        profile = galsim.InterpolatedImage(image, x_interpolant="lanczos15", normalization="flux")
         kernels.append(lattice_kernel(profile, grid))
     return np.stack(kernels)
 
@@ -257,7 +260,7 @@ def eval_file_group(args, file_name, exposures):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--psf-model", default="moffat", choices=["moffat", "kolmogorov"],
+        "--psf-model", default="moffat", choices=["moffat", "kolmogorov", "realistic"],
         help="must match the PSF model the sim was generated with",
     )
     parser.add_argument("--manifest", default="manifests/sim_split_v1.json")
