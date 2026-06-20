@@ -16,6 +16,7 @@ import traceback
 from pathlib import Path
 
 import galsim
+import galsim.des
 import numpy as np
 import pandas as pd
 import torch
@@ -31,6 +32,7 @@ from implicitpsf.evaluation.run_eval import exposure_masks
 from implicitpsf.provenance import write_result
 from implicitpsf.render import render_at
 from implicitpsf.simulate import (
+    _PSF_MODEL,
     HEIGHT,
     MOFFAT_BETA,
     NOISE_SIGMA,
@@ -75,15 +77,21 @@ def sample_galaxies(rng, n_gal):
 
 
 def inject_stamp(rng, field, x, y, gal):
-    """Noisy galaxy stamp rendered entirely by galsim (independent of our fitter)."""
+    """Noisy galaxy stamp rendered entirely by galsim (independent of our fitter). In 'empirical'
+    mode the injection PSF is the real PSFEx model (already pixel-convolved); else the analytic
+    profile convolved with an explicit Pixel."""
     fwhm, g1, g2 = true_psf_params(field, float(x), float(y), 0.0)
-    psf = psf_profile(fwhm).shear(g1=g1, g2=g2)
     q = np.exp(-np.hypot(gal["eta1"], gal["eta2"]))
     beta = 0.5 * np.arctan2(gal["eta2"], gal["eta1"])
     profile = galsim.Sersic(
         n=float(gal["n"]), half_light_radius=float(gal["re"]) * PIXEL_SCALE, flux=float(gal["flux"])
     ).shear(q=float(q), beta=float(beta) * galsim.radians)
-    obj = galsim.Convolve(profile, psf, galsim.Pixel(PIXEL_SCALE))
+    if _PSF_MODEL["name"] == "empirical":
+        psf = _des_psfex(field).getPSF(galsim.PositionD(float(x) + 1.0, float(y) + 1.0))
+        obj = galsim.Convolve(profile, psf)  # getPSF already includes the pixel response
+    else:
+        psf = psf_profile(fwhm).shear(g1=g1, g2=g2)
+        obj = galsim.Convolve(profile, psf, galsim.Pixel(PIXEL_SCALE))
 
     half = PATCH // 2
     corner_x = round(float(x)) - half + 1  # 1-based stamp corner
@@ -115,7 +123,33 @@ def _as_interpolated(profile):
     return galsim.InterpolatedImage(img, x_interpolant="lanczos15", normalization="flux")
 
 
+_DES_CACHE = {}
+
+
+def _des_psfex(field):
+    """Cached DES_PSFEx for the field's empirical PSF (built once per model, reused across the
+    exposures that cycle it -- avoids re-loading per galaxy)."""
+    key = field["psfex_path"]
+    if key not in _DES_CACHE:
+        _DES_CACHE[key] = galsim.des.DES_PSFEx(key, image_file_name=field["psfex_fits"])
+    return _DES_CACHE[key]
+
+
+def _empirical_truth_kernels(field, x, y, grid):
+    """Truth kernels for the 'empirical' sim: the true PSF is the real PSFEx model stored in the
+    field. getPSF already includes the pixel response (rendered no_pixel via _as_interpolated),
+    matching the injection in inject_stamp."""
+    des = _des_psfex(field)
+    kernels = []
+    for x0, y0 in zip(x, y, strict=True):
+        prof = des.getPSF(galsim.PositionD(float(x0) + 1.0, float(y0) + 1.0))
+        kernels.append(lattice_kernel(_as_interpolated(prof), grid))
+    return np.stack(kernels)
+
+
 def truth_kernels(field, x, y, grid):
+    if _PSF_MODEL["name"] == "empirical":
+        return _empirical_truth_kernels(field, x, y, grid)
     kernels = []
     for x0, y0 in zip(x, y, strict=True):
         fwhm, g1, g2 = true_psf_params(field, float(x0), float(y0), 0.0)
@@ -273,7 +307,7 @@ def eval_file_group(args, file_name, exposures):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--psf-model", default="moffat", choices=["moffat", "kolmogorov", "realistic"],
+        "--psf-model", default="moffat", choices=["moffat", "kolmogorov", "realistic", "empirical"],
         help="must match the PSF model the sim was generated with",
     )
     parser.add_argument("--manifest", default="manifests/sim_split_v1.json")
