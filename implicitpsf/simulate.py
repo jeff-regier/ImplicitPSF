@@ -402,7 +402,7 @@ def main():
     parser.add_argument(
         "--psf-model",
         default="moffat",
-        choices=["moffat", "kolmogorov"],
+        choices=["moffat", "kolmogorov", "realistic"],
         help="atmospheric PSF model; kolmogorov is sharper-cored (W3 sharp-core testbed)",
     )
     args = parser.parse_args()

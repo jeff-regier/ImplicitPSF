@@ -198,7 +198,7 @@ def main():
         choices=["implicit", "piff", "psfex"],
     )
     parser.add_argument(
-        "--psf-model", default="moffat", choices=["moffat", "kolmogorov"],
+        "--psf-model", default="moffat", choices=["moffat", "kolmogorov", "realistic"],
         help="must match the PSF model the sim was generated with",
     )
     args = parser.parse_args()
