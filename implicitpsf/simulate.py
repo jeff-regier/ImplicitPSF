@@ -27,26 +27,40 @@ WIDTH, HEIGHT = 2048, 4096  # real DES CCD 31 dimensions (was a 1024x2048 quarte
 PATCH = 32
 NOISE_SIGMA = 20.0  # realistic sky noise: gives star SNR p50~54, galaxy SNR p50~14 (match DES)
 MOFFAT_BETA = 2.5
+# Instrumental (optics + charge-diffusion) blur convolved onto the atmospheric Kolmogorov to
+# form the 'realistic' effective PSF. Pure Kolmogorov omits this and is unphysically peaked;
+# Moffat is too soft. ~0.5 px is the DECam charge-diffusion + optical scale and lands the core
+# between those extremes (EE(r<=2px): Moffat 0.325 < realistic 0.380 < Kolmogorov 0.400).
+DETECTOR_SIGMA_PIXELS = 0.5
 _PSF_MODEL = {"name": "moffat"}  # mutable holder (fork workers inherit it); avoids a global stmt
 N_STARS_RANGE = (90, 150)  # ~99 clean stars/exposure to match real density over the full CCD
 
 
 def set_psf_model(name):
-    """Select the atmospheric PSF model ('moffat' or 'kolmogorov'); call before generation
+    """Select the PSF model ('moffat', 'kolmogorov', or 'realistic'); call before generation
     AND in any truth eval (sim_truth/galaxy_recovery) so the truth PSF matches the sim."""
-    assert name in ("moffat", "kolmogorov")
+    assert name in ("moffat", "kolmogorov", "realistic")
     _PSF_MODEL["name"] = name
 
 
 def psf_profile(fwhm_pixels, flux=1.0):
-    """Atmospheric PSF at the given FWHM. Moffat is a soft-cored fitting function (too soft
-    to exhibit the real PSF-core under-concentration deficit); Kolmogorov is the physical
-    ground-based-turbulence model, sharper-cored, used to reproduce that deficit on a clean
-    simulation truth grid (W3 sharp-core testbed)."""
+    """Effective PSF at the given FWHM. 'moffat' is a soft-cored fitting function (too smooth to
+    show the real core deficit); 'kolmogorov' is pure atmospheric turbulence (too peaked to fit);
+    'realistic' is Kolmogorov convolved with an instrumental (optics + charge-diffusion) Gaussian,
+    the physical DECam effective PSF -- sharp-cored enough to exhibit the decoder deficit but
+    fittable, like real data (W3 testbed)."""
     fwhm_arcsec = fwhm_pixels * PIXEL_SCALE
-    if _PSF_MODEL["name"] == "kolmogorov":
-        return galsim.Kolmogorov(fwhm=fwhm_arcsec, flux=flux)
-    return galsim.Moffat(beta=MOFFAT_BETA, fwhm=fwhm_arcsec, flux=flux)
+    builders = {
+        "moffat": lambda: galsim.Moffat(beta=MOFFAT_BETA, fwhm=fwhm_arcsec, flux=flux),
+        "kolmogorov": lambda: galsim.Kolmogorov(fwhm=fwhm_arcsec, flux=flux),
+        "realistic": lambda: galsim.Convolve(
+            [
+                galsim.Kolmogorov(fwhm=fwhm_arcsec, flux=flux),
+                galsim.Gaussian(sigma=DETECTOR_SIGMA_PIXELS * PIXEL_SCALE),
+            ]
+        ),
+    }
+    return builders[_PSF_MODEL["name"]]()
 
 
 FLUX_RANGE = (2e3, 6e5)  # real clean-star flux p10-p90 ~7e3-5e5 (bright tail matters)
