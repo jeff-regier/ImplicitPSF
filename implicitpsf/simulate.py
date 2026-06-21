@@ -241,8 +241,26 @@ def wcs_header(exposure_seed):
     return header
 
 
+def first_test_seeds(n_exposures, n_test_fits):
+    """The seeds of the first n_test_fits test exposures (smallest exposure_id).
+
+    galaxy_recovery screens the test exposures `sorted` by exposure_id and takes the first
+    --max-exposures; exposure_id sorts the same as the seed, so only these need FITS. Writing
+    FITS for all ~2000 val/test exposures (when ~24 are used) is what filled the disk.
+    """
+    seeds = []
+    for seed in range(n_exposures):
+        night = f"sim{seed // 8:05d}"
+        if assign_split(night, seed=0, frac_val=0.1, frac_test=0.1) == "test":
+            seeds.append(seed)
+            if len(seeds) >= n_test_fits:
+                break
+    return frozenset(seeds)
+
+
 def simulate_exposure(
-    exposure_seed, fits_dir, chromatic=False, galaxy_fraction=0.0, contam_fraction=0.0
+    exposure_seed, fits_dir, chromatic=False, galaxy_fraction=0.0, contam_fraction=0.0,
+    fits_seeds=frozenset(),
 ):
     """Render one exposure; returns the v2-schema per-exposure record.
 
@@ -294,11 +312,10 @@ def simulate_exposure(
     exposure_id = f"S{exposure_seed:08d}"
     night = f"sim{exposure_seed // 8:05d}"  # 8 exposures share a "night"
 
-    # PIFF/PSFEx run only on val/test exposures; skip the 25 MB FITS for train ones.
-    # Split args must match build_manifest's (seed=0, frac_val=0.1, frac_test=0.1).
-    split = assign_split(night, seed=0, frac_val=0.1, frac_test=0.1)
+    # FITS exist only so PIFF/PSFEx can be fit on the screened test exposures; only the first
+    # N test exposures (fits_seeds) are ever screened, so the rest would be 25 MB of dead disk.
     fits_path = ""
-    if split != "train":
+    if exposure_seed in fits_seeds:
         fits_path = str(Path(fits_dir) / f"{exposure_id}.fits")
         hdus = [
             fits.PrimaryHDU(),
@@ -433,14 +450,14 @@ def save_chunk(records, out_dir, worker_id, n_chunks):
 
 def worker(
     worker_id, seeds, out_dir, fits_dir, exposures_per_file, chromatic, galaxy_fraction,
-    contam_fraction,
+    contam_fraction, fits_seeds,
 ):
     records = []
     n_chunks = 0
     for seed in seeds:
         record = simulate_exposure(
             seed, fits_dir, chromatic=chromatic, galaxy_fraction=galaxy_fraction,
-            contam_fraction=contam_fraction,
+            contam_fraction=contam_fraction, fits_seeds=fits_seeds,
         )
         records.append(record)
         if len(records) == exposures_per_file:
@@ -478,8 +495,15 @@ def main():
         choices=["moffat", "kolmogorov", "realistic"],
         help="atmospheric PSF model; kolmogorov is sharper-cored (W3 sharp-core testbed)",
     )
+    parser.add_argument(
+        "--n-test-fits",
+        type=int,
+        default=64,
+        help="write FITS only for the first N test exposures (the rest are never screened)",
+    )
     args = parser.parse_args()
     set_psf_model(args.psf_model)
+    fits_seeds = first_test_seeds(args.n_exposures, args.n_test_fits)
 
     Path(args.out_dir).mkdir(parents=True, exist_ok=True)
     Path(args.fits_dir).mkdir(parents=True, exist_ok=True)
@@ -498,6 +522,7 @@ def main():
                 args.chromatic,
                 args.galaxy_fraction,
                 args.contam_fraction,
+                fits_seeds,
             ),
         )
         for i, chunk in enumerate(chunks)
