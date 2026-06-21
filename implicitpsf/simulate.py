@@ -181,31 +181,64 @@ def render_galaxy(image, field, x, y, flux, color, re_pix, sersic_n, g1_gal, g2_
     image[bounds] += stamp[bounds]
 
 
-CONTAM_FLUX_FRAC_RANGE = (0.08, 0.35)  # companion flux as a fraction of its host star
-CONTAM_OFFSET_RANGE = (1.5, 4.0)  # companion offset from the host star (pixels, within stamp)
+# Realistic faint-neighbour contamination: a continuous spatial Poisson process of undetected
+# field sources (mostly faint galaxies) that hide in 'clean' star stamps and bias the PSF fit.
+# Rate ~ r-band number counts (~1 source per 8.4"=32px stamp); flux from a power law p(S)~S^-alpha.
+CONTAM_FLUX_EXPONENT = 0.5  # truncpareto shape b (DES counts ~0.5); flux PDF ~ S^-(b+1) ~ S^-1.5
+CONTAM_FLUX_FLOOR = 100.0  # faintest neighbour worth rendering (sim flux units)
+CONTAM_FLUX_CEIL = 6000.0  # brightest neighbour drawn (~3x the single-epoch detection limit)
+CONTAM_FLAG_LIMIT = 2000.0  # single-epoch detection limit: a host with a brighter neighbour is
+# SEP-flagged and dropped from the clean sample (the real-pipeline filter that protects PIFF)
+CONTAM_PROB_GALAXY = 0.58  # DES fraction of detections that are galaxies (vs stars)
 
 
-def inject_contaminants(image, field, x, y, flux, color, rng, contam_fraction):
-    """Render faint sub-threshold companions beside a fraction of the stars.
+def sample_power_law(rng, n, lo, hi, exponent):
+    """Draw n fluxes with PDF ~ S^-(exponent+1) on [lo, hi] (truncpareto shape, exponent>0)."""
+    power = -exponent
+    u = rng.uniform(0.0, 1.0, n)
+    return (lo**power + u * (hi**power - lo**power)) ** (1.0 / power)
 
-    Companions are NOT added to the detection list: they are invisible blends that poison
-    their host star's cutout (adding off-centre wing flux that broadens the fitted PSF),
-    mirroring real 'clean' stars that carry unresolved faint neighbours. A PSF fit broadened
-    this way recovers galaxies too small -- the contamination test for the real-data deficit
-    that is absent on clean analytic sims.
+
+def _render_contaminants(image, field, cx, cy, cflux, ccolor, is_galaxy, rng):
+    """Render faint neighbours: point sources for stars, Sersic profiles for galaxies."""
+    for k in np.nonzero(~is_galaxy)[0]:
+        render_star(image, field, cx[k], cy[k], cflux[k], ccolor[k])
+    gal = np.nonzero(is_galaxy)[0]
+    re_pix = rng.uniform(*GALAXY_RE_RANGE, len(gal))
+    sersic = rng.uniform(*GALAXY_SERSIC_RANGE, len(gal))
+    shear = rng.uniform(0.0, GALAXY_SHEAR_MAX, len(gal))
+    phi = rng.uniform(0.0, np.pi, len(gal))
+    for j, k in enumerate(gal):
+        g1, g2 = shear[j] * np.cos(2.0 * phi[j]), shear[j] * np.sin(2.0 * phi[j])
+        render_galaxy(image, field, cx[k], cy[k], cflux[k], ccolor[k], re_pix[j], sersic[j], g1, g2)
+
+
+def inject_contaminants(image, field, x, y, rng, rate):
+    """Render undetectable faint neighbours (stars+galaxies, power-law fluxes) into star stamps.
+
+    A Poisson(rate) number of faint field sources per stamp (rate ~ r-band counts, ~1 per stamp) --
+    un-deblendable blends that survive 'clean' selection and broaden the learned PSF. Returns, per
+    star, whether it has a neighbour above the single-epoch detection limit: SEP would flag that
+    host, so it is dropped from the clean sample (as in the real pipeline that feeds PIFF), leaving
+    only sub-threshold blends to contaminate the surviving clean stars.
     """
-    if contam_fraction <= 0.0:
-        return
-    hit = rng.random(len(x)) < contam_fraction
-    idx = np.nonzero(hit)[0]
-    dist = rng.uniform(*CONTAM_OFFSET_RANGE, len(idx))
-    angle = rng.uniform(0.0, 2.0 * np.pi, len(idx))
-    companion_flux = flux[idx] * rng.uniform(*CONTAM_FLUX_FRAC_RANGE, len(idx))
-    companion_x = x[idx] + dist * np.cos(angle)
-    companion_y = y[idx] + dist * np.sin(angle)
-    cols = zip(companion_x, companion_y, companion_flux, color[idx], strict=True)
-    for cx, cy, cf, cc in cols:
-        render_star(image, field, cx, cy, cf, cc)
+    flagged = np.zeros(len(x), dtype=bool)
+    if rate <= 0.0:
+        return flagged
+    counts = rng.poisson(rate, len(x))
+    total = int(counts.sum())
+    if total == 0:
+        return flagged
+    host = np.repeat(np.arange(len(x)), counts)
+    half = PATCH // 2
+    cx = x[host] + rng.uniform(-half, half, total)
+    cy = y[host] + rng.uniform(-half, half, total)
+    cflux = sample_power_law(rng, total, CONTAM_FLUX_FLOOR, CONTAM_FLUX_CEIL, CONTAM_FLUX_EXPONENT)
+    ccolor = np.clip(rng.normal(COLOR_MEAN, COLOR_SCATTER, total), -0.5, 3.0)
+    is_galaxy = rng.random(total) < CONTAM_PROB_GALAXY
+    np.logical_or.at(flagged, host, cflux > CONTAM_FLAG_LIMIT)
+    _render_contaminants(image, field, cx, cy, cflux, ccolor, is_galaxy, rng)
+    return flagged
 
 
 def sample_galaxies(rng, n_galaxies):
@@ -259,7 +292,7 @@ def first_test_seeds(n_exposures, n_test_fits):
 
 
 def simulate_exposure(
-    exposure_seed, fits_dir, chromatic=False, galaxy_fraction=0.0, contam_fraction=0.0,
+    exposure_seed, fits_dir, chromatic=False, galaxy_fraction=0.0, contam_rate=0.0,
     fits_seeds=frozenset(),
 ):
     """Render one exposure; returns the v2-schema per-exposure record.
@@ -283,7 +316,7 @@ def simulate_exposure(
     image = galsim.Image(WIDTH, HEIGHT, scale=PIXEL_SCALE, dtype=np.float32)
     for x0, y0, flux0, color0 in zip(x, y, flux, color, strict=True):
         render_star(image, field, x0, y0, flux0, color0)
-    inject_contaminants(image, field, x, y, flux, color, rng, contam_fraction)
+    flagged = inject_contaminants(image, field, x, y, rng, contam_rate)
 
     gal = sample_galaxies(rng, n_galaxies)
     gal_cols = zip(
@@ -348,8 +381,10 @@ def simulate_exposure(
         keep_second = ~(star_flux[first] > ISOLATION_FLUX_RATIO * star_flux[second])
         np.logical_and.at(isolated, first, keep_first)
         np.logical_and.at(isolated, second, keep_second)
+    # a host with a SEP-flaggable neighbour (above the detection limit) is dropped from clean,
+    # exactly as the real pipeline removes it before PIFF/the model see it
     star_type = np.full(n_det, TYPE_GALAXY, dtype=np.uint8)
-    star_type[:n_stars] = np.where(isolated, TYPE_CLEAN, TYPE_STAR_CONTEXT)
+    star_type[:n_stars] = np.where(isolated & ~flagged, TYPE_CLEAN, TYPE_STAR_CONTEXT)
 
     n_slots = n_det  # stars + galaxies; padding handled by fixed-slot packing
     true_fwhm, true_g1, true_g2 = true_psf_params(field, x, y, color)
@@ -450,14 +485,14 @@ def save_chunk(records, out_dir, worker_id, n_chunks):
 
 def worker(
     worker_id, seeds, out_dir, fits_dir, exposures_per_file, chromatic, galaxy_fraction,
-    contam_fraction, fits_seeds,
+    contam_rate, fits_seeds,
 ):
     records = []
     n_chunks = 0
     for seed in seeds:
         record = simulate_exposure(
             seed, fits_dir, chromatic=chromatic, galaxy_fraction=galaxy_fraction,
-            contam_fraction=contam_fraction, fits_seeds=fits_seeds,
+            contam_rate=contam_rate, fits_seeds=fits_seeds,
         )
         records.append(record)
         if len(records) == exposures_per_file:
@@ -484,10 +519,10 @@ def main():
         help="inject this many galaxy detections (star_type=2) per star",
     )
     parser.add_argument(
-        "--contam-fraction",
+        "--contam-rate",
         type=float,
         default=0.0,
-        help="fraction of stars given a faint sub-threshold companion (contamination test)",
+        help="mean faint undetected neighbours per star stamp (Poisson rate; ~1 from DES counts)",
     )
     parser.add_argument(
         "--psf-model",
@@ -521,7 +556,7 @@ def main():
                 args.exposures_per_file,
                 args.chromatic,
                 args.galaxy_fraction,
-                args.contam_fraction,
+                args.contam_rate,
                 fits_seeds,
             ),
         )
