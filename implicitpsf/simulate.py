@@ -181,6 +181,33 @@ def render_galaxy(image, field, x, y, flux, color, re_pix, sersic_n, g1_gal, g2_
     image[bounds] += stamp[bounds]
 
 
+CONTAM_FLUX_FRAC_RANGE = (0.08, 0.35)  # companion flux as a fraction of its host star
+CONTAM_OFFSET_RANGE = (1.5, 4.0)  # companion offset from the host star (pixels, within stamp)
+
+
+def inject_contaminants(image, field, x, y, flux, color, rng, contam_fraction):
+    """Render faint sub-threshold companions beside a fraction of the stars.
+
+    Companions are NOT added to the detection list: they are invisible blends that poison
+    their host star's cutout (adding off-centre wing flux that broadens the fitted PSF),
+    mirroring real 'clean' stars that carry unresolved faint neighbours. A PSF fit broadened
+    this way recovers galaxies too small -- the contamination test for the real-data deficit
+    that is absent on clean analytic sims.
+    """
+    if contam_fraction <= 0.0:
+        return
+    hit = rng.random(len(x)) < contam_fraction
+    idx = np.nonzero(hit)[0]
+    dist = rng.uniform(*CONTAM_OFFSET_RANGE, len(idx))
+    angle = rng.uniform(0.0, 2.0 * np.pi, len(idx))
+    companion_flux = flux[idx] * rng.uniform(*CONTAM_FLUX_FRAC_RANGE, len(idx))
+    companion_x = x[idx] + dist * np.cos(angle)
+    companion_y = y[idx] + dist * np.sin(angle)
+    cols = zip(companion_x, companion_y, companion_flux, color[idx], strict=True)
+    for cx, cy, cf, cc in cols:
+        render_star(image, field, cx, cy, cf, cc)
+
+
 def sample_galaxies(rng, n_galaxies):
     """Galaxy detection properties: position, flux, color, size, Sersic index, shape."""
     half = PATCH // 2
@@ -214,7 +241,9 @@ def wcs_header(exposure_seed):
     return header
 
 
-def simulate_exposure(exposure_seed, fits_dir, chromatic=False, galaxy_fraction=0.0):
+def simulate_exposure(
+    exposure_seed, fits_dir, chromatic=False, galaxy_fraction=0.0, contam_fraction=0.0
+):
     """Render one exposure; returns the v2-schema per-exposure record.
 
     galaxy_fraction injects that many galaxy detections per star (star_type=2); they
@@ -236,6 +265,7 @@ def simulate_exposure(exposure_seed, fits_dir, chromatic=False, galaxy_fraction=
     image = galsim.Image(WIDTH, HEIGHT, scale=PIXEL_SCALE, dtype=np.float32)
     for x0, y0, flux0, color0 in zip(x, y, flux, color, strict=True):
         render_star(image, field, x0, y0, flux0, color0)
+    inject_contaminants(image, field, x, y, flux, color, rng, contam_fraction)
 
     gal = sample_galaxies(rng, n_galaxies)
     gal_cols = zip(
@@ -401,12 +431,16 @@ def save_chunk(records, out_dir, worker_id, n_chunks):
     print(f"[worker {worker_id}] wrote {out_path}")
 
 
-def worker(worker_id, seeds, out_dir, fits_dir, exposures_per_file, chromatic, galaxy_fraction):
+def worker(
+    worker_id, seeds, out_dir, fits_dir, exposures_per_file, chromatic, galaxy_fraction,
+    contam_fraction,
+):
     records = []
     n_chunks = 0
     for seed in seeds:
         record = simulate_exposure(
-            seed, fits_dir, chromatic=chromatic, galaxy_fraction=galaxy_fraction
+            seed, fits_dir, chromatic=chromatic, galaxy_fraction=galaxy_fraction,
+            contam_fraction=contam_fraction,
         )
         records.append(record)
         if len(records) == exposures_per_file:
@@ -433,6 +467,12 @@ def main():
         help="inject this many galaxy detections (star_type=2) per star",
     )
     parser.add_argument(
+        "--contam-fraction",
+        type=float,
+        default=0.0,
+        help="fraction of stars given a faint sub-threshold companion (contamination test)",
+    )
+    parser.add_argument(
         "--psf-model",
         default="moffat",
         choices=["moffat", "kolmogorov", "realistic"],
@@ -457,6 +497,7 @@ def main():
                 args.exposures_per_file,
                 args.chromatic,
                 args.galaxy_fraction,
+                args.contam_fraction,
             ),
         )
         for i, chunk in enumerate(chunks)
