@@ -116,6 +116,8 @@ def run_epoch_phase(
                 raise RuntimeError(f"out-of-order batch in {phase} epoch {epoch}")
 
             batch = {key: batch_data[key].to(device) for key in BATCH_KEYS}
+            if "clean_psf" in batch_data:  # contamination-correction target (sim only)
+                batch["clean_psf"] = batch_data["clean_psf"].to(device)
             if zero_color:
                 batch["colors"] = torch.zeros_like(batch["colors"])
             loss = model.get_loss(batch)
