@@ -15,6 +15,7 @@ import argparse
 
 import numpy as np
 
+from implicitpsf.contam_mcmc import posterior_mean_contam
 from implicitpsf.contam_sampler import FWHM_TO_SIGMA, fit_fluxes, gaussian_source
 
 
@@ -83,6 +84,22 @@ def em_round(stars, weights, psf, noise, threshold, max_sources, min_radius):
     return (new_psf / new_psf.sum()).reshape(size, size)
 
 
+def em_round_mcmc(stars, weights, psf, prior, rng, n_steps):
+    """Calibrated EM round: E-step subtracts each star's POSTERIOR-MEAN contamination (marginalized,
+    faint sources included by probability) via the calibrated MCMC; M-step re-stacks."""
+    size = psf.shape[0]
+    fwhm = psf_fwhm(psf)
+    central_g = psf.ravel()
+    cleaned = []
+    for d, w in zip(stars, weights, strict=True):
+        contam = posterior_mean_contam(d.ravel(), w.ravel(), central_g, fwhm, size, prior,
+                                       n_steps, rng)
+        c = d.ravel() - contam
+        cleaned.append((c / max(c.sum(), 1e-8)).reshape(size, size))
+    new_psf = np.clip(np.mean(cleaned, axis=0), 0, None)
+    return new_psf / new_psf.sum()
+
+
 def make_field(rng, n_stars, size, fwhm, central_flux, lam, flux_lo, flux_hi, noise_sigma):
     """Synthetic field: each star = central PSF (Gaussian) + Poisson faint Gaussian contaminants."""
     true_psf = gaussian_source((size - 1) / 2.0, (size - 1) / 2.0, fwhm, size)
@@ -112,6 +129,8 @@ def main():
     parser.add_argument("--lam", type=float, default=2.0)
     parser.add_argument("--rounds", type=int, default=6)
     parser.add_argument("--threshold", type=float, default=3.0)
+    parser.add_argument("--calibrated", action="store_true", help="use the calibrated MCMC E-step")
+    parser.add_argument("--mcmc-steps", type=int, default=3000)
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
     rng = np.random.default_rng(args.seed)
@@ -120,15 +139,20 @@ def main():
     stars, true_psf = make_field(rng, args.n_stars, args.size, args.fwhm, central_flux,
                                  args.lam, 500.0, 2000.0, noise_sigma)
     weights = np.full_like(stars, 1.0 / noise_sigma**2)
+    prior = {"lam": args.lam, "flux_lo": 300.0, "flux_hi": 2500.0, "alpha": 1.0}
 
     true_ee = ee_at_r(true_psf, 2.0)
     psf = normalized_stack(stars)
-    print(f"{args.n_stars} stars, true FWHM {args.fwhm}, lam {args.lam}, noise {noise_sigma:.0f}")
+    e_step = "calibrated MCMC" if args.calibrated else "greedy point-estimate"
+    print(f"{args.n_stars} stars, true FWHM {args.fwhm}, lam {args.lam}, E-step: {e_step}")
     print(f"  truth          EE@r2 = {true_ee:.4f}")
     print(f"  round 0 (stack) EE@r2 = {ee_at_r(psf, 2.0):.4f}  "
           f"(deficit {ee_at_r(psf, 2.0) - true_ee:+.4f})")
     for r in range(1, args.rounds + 1):
-        psf = em_round(stars, weights, psf, noise_sigma, args.threshold, 6, min_radius=2.5)
+        if args.calibrated:
+            psf = em_round_mcmc(stars, weights, psf, prior, rng, args.mcmc_steps)
+        else:
+            psf = em_round(stars, weights, psf, noise_sigma, args.threshold, 6, min_radius=2.5)
         ee = ee_at_r(psf, 2.0)
         print(f"  EM round {r}      EE@r2 = {ee:.4f}  (deficit {ee - true_ee:+.4f})")
 

@@ -130,6 +130,28 @@ def run(data, weight, central_g, fwhm, size, prior, n_steps, rng, pos_step=1.0, 
     return np.array(counts), np.array(totals)
 
 
+def posterior_mean_contam(data, weight, central_g, fwhm, size, prior, n_steps, rng,
+                          pos_step=1.0, log_step=0.3, burn=0.3):
+    """Run the calibrated chain and return the POSTERIOR-MEAN contaminant model stamp (the EM E-step:
+    the marginalized contaminating light to subtract, with the faint/sub-threshold sources included
+    in proportion to their posterior probability)."""
+    cf0 = float((data * central_g).sum() / (central_g**2).sum())
+    state = (cf0, np.empty((0, 2)), np.empty(0))
+    cur_ll = log_like(state, data, weight, central_g, fwhm, size)
+    accum = np.zeros(size * size)
+    n_acc = 0
+    burn_steps = int(burn * n_steps)
+    for i in range(n_steps):
+        state, cur_ll = step(state, cur_ll, data, weight, central_g, fwhm, size, prior, rng,
+                             pos_step, log_step)
+        if i >= burn_steps:
+            _, pos, fl = state
+            for (x, y), f in zip(pos, fl, strict=True):
+                accum += f * gaussian_source(x, y, fwhm, size).ravel()
+            n_acc += 1
+    return accum / max(n_acc, 1)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--size", type=int, default=32)
