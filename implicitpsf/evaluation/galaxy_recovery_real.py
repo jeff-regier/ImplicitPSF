@@ -118,6 +118,25 @@ def implicit_kernels(model, data, index, fit_mask, x, y):
     return render_at(model, batch, queries, colors, oversample=OVERSAMPLE).numpy()
 
 
+def implicit_interp_kernels(model, data, index, fit_mask, x, y, grid):
+    """The implicit ePSF rendered through the SAME native-sample -> InterpolatedImage(lanczos15) ->
+    fine-lattice path as the truth/PIFF arms (oversample=1), instead of render_at's direct fine
+    evaluation. Isolates whether the size deficit is an artifact of the render_at rendering path:
+    same model, rendered apples-to-apples with PIFF. If this arm matches `implicit`, the path is not
+    the cause; if it matches PIFF (~0), the deficit was the rendering."""
+    batch = dict(make_batch(data, [index]))
+    batch["flux"] = batch["flux"] * torch.from_numpy(fit_mask).unsqueeze(0)
+    queries = torch.from_numpy(np.column_stack([np.round(x), np.round(y)]).astype(np.float32))
+    colors = torch.zeros(len(x))
+    native = render_at(model, batch, queries, colors, oversample=1).numpy()  # (n, PATCH, PATCH)
+    kernels = []
+    for stamp in native:
+        image = galsim.Image(np.ascontiguousarray(stamp), scale=PIXEL_SCALE)
+        profile = galsim.InterpolatedImage(image, x_interpolant="lanczos15", normalization="flux")
+        kernels.append(lattice_kernel(profile, grid))
+    return np.stack(kernels)
+
+
 def piff_kernels(psf, x, y, grid):
     """PIFF kernels in the data pixel frame, resampled on the fine lattice exactly as the
     empirical truth arm. We draw each model WCS-aware (``render_piff``, identical to the
@@ -198,6 +217,7 @@ def evaluate_exposure(model, data, index, reserved_ids, workdir, free_n, with_ps
     arms = {
         "truth": truth_kernels(profiles, grid),
         "implicit": implicit_kernels(model, data, index, fit_mask, ax, ay),
+        "implicit_interp": implicit_interp_kernels(model, data, index, fit_mask, ax, ay, grid),
         "piff": piff_kernels(piff_psf, ax, ay, grid),
     }
     if with_psfex:  # PSFEx fit + DES_PSFEx render is ~10 min/exposure; opt in for the final table
