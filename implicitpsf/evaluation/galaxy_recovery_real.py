@@ -1,18 +1,21 @@
-"""Star-anchored galaxy injection-recovery on REAL test exposures (WS4).
+"""Star-anchored galaxy injection-recovery — the SINGLE engine for both real and sim data.
 
-Real data has no known true PSF, so we anchor on stars: a bright, strictly-isolated
-reserved star's pixel image IS an empirical sample of the true effective-PSF at its CCD
-location (the same object run_eval treats as ground truth on reserved stars). We inject a
-galsim Sersic galaxy convolved with that star's image (an InterpolatedImage, so it
-already carries the pixel response) plus the star's own noise, then fit it through PSF
-arms that PREDICT the PSF at the anchor position from the OTHER (non-reserved) stars:
-the anchor's own image (truth/floor), the implicit model via render_at, and PIFF. The
-truth arm recovers the injected galaxy with its own kernel, so its bias must be ~0 — that
-is the build-correctness gate before any cross-method comparison is trusted.
+We anchor on stars: a bright, strictly-isolated reserved star's pixel image IS an empirical
+sample of the effective-PSF at its CCD location (the same object run_eval treats as ground
+truth on reserved stars). We inject a galsim Sersic galaxy convolved with that star's image
+(an InterpolatedImage, so it already carries the pixel response) plus the star's own noise,
+then fit it through PSF arms that PREDICT the PSF at the anchor position from the OTHER
+(non-reserved) stars: the anchor's own image (truth/floor), the implicit model via render_at,
+and PIFF. The truth arm recovers the injected galaxy with its own kernel, so its bias must be
+~0 — the build-correctness gate before any cross-method comparison is trusted.
 
-Unlike the sim version this measures interpolation/amortization error on REAL PSFs, the
-exact quantity a galaxy-shape pipeline cares about. PSFEx is added once the truth-arm
-null test passes.
+The injection is IDENTICAL on real and simulated data (same code), so a discrepancy can never
+come from the harness. Because the anchor is a real/simulated star image, its PSF can be
+contaminated by sub-threshold blends on BOTH (the isolation cut only excludes *detected*
+neighbours). On sim data ONLY, the known true PSF field gives one extra arm, `analytic_truth`,
+which recovers the same injected stamps through the noiseless clean PSF at the anchor positions
+— so `truth - analytic_truth` directly measures how much a contaminated anchor biases recovery.
+Pass `--psf-model` to turn sim data into that mode; leave it unset for real data.
 """
 
 import argparse
@@ -34,12 +37,18 @@ from implicitpsf.baselines.psfex_runner import fit_psfex, render_psfex
 from implicitpsf.blend import chebyshev_distances, sample_grid
 from implicitpsf.datasets import load_exposure_file, make_batch, stable_seed
 from implicitpsf.evaluation.galaxy_fit import OVERSAMPLE, fit_galaxies
-from implicitpsf.evaluation.galaxy_recovery import lattice_kernel, sample_galaxies
+from implicitpsf.evaluation.galaxy_recovery import (
+    lattice_kernel,
+    sample_galaxies,
+)
+from implicitpsf.evaluation.galaxy_recovery import (
+    truth_kernels as analytic_truth_kernels,
+)
 from implicitpsf.evaluation.moments import PIXEL_SCALE
 from implicitpsf.evaluation.run_eval import exposure_masks
 from implicitpsf.provenance import write_result
 from implicitpsf.render import render_at
-from implicitpsf.simulate import PATCH
+from implicitpsf.simulate import PATCH, set_psf_model
 from implicitpsf.splits import load_manifest, reserved_star_ids
 
 ANCHOR_CLEARANCE = 24.0  # Chebyshev px to any other detection (strict — anchor is truth)
@@ -242,6 +251,11 @@ def evaluate_exposure(model, data, index, reserved_ids, workdir, free_n, with_ps
         psfex_path = fit_psfex(ldac_path, Path(workdir) / "psfex_out")
         arms["psfex"] = psfex_kernels(psfex_path, fits_path, ax, ay, grid)
 
+    if "true_field" in data:  # sim only: recover through the KNOWN clean PSF at the anchor
+        # positions. truth (anchor image) - analytic_truth isolates anchor contamination bias.
+        field = {"chromatic": False, **data["true_field"][index]}
+        arms["analytic_truth"] = analytic_truth_kernels(field, ax, ay, grid)
+
     arm_names = list(arms)
     kernels = torch.tensor(np.concatenate([arms[a] for a in arm_names]), dtype=torch.float32)
     rep = len(arm_names)
@@ -286,6 +300,8 @@ def evaluate_exposure(model, data, index, reserved_ids, workdir, free_n, with_ps
 
 def eval_file_group(args, file_name, exposures):
     torch.set_num_threads(1)
+    if args.psf_model is not None:  # sim: workers re-import simulate.py, so the analytic_truth
+        set_psf_model(args.psf_model)  # arm needs _PSF_MODEL set per worker (as in galaxy_recovery)
     manifest = load_manifest(args.manifest)
     model = load_model(args.checkpoint)
     data = load_exposure_file(Path(args.data_dir) / file_name)
@@ -312,6 +328,12 @@ def main():
     parser.add_argument("--data-dir", default="/data/scratch/regier/sep_des_stars_v2")
     parser.add_argument("--checkpoint", default="checkpoints/real_v6_blend/best.pt")
     parser.add_argument("--out", default="results/galaxy_recovery_real.parquet")
+    parser.add_argument(
+        "--psf-model",
+        default=None,
+        choices=["moffat", "kolmogorov", "realistic", "empirical"],
+        help="SIM data: adds the noiseless analytic_truth reference arm; leave unset for real",
+    )
     parser.add_argument("--split", default="test", choices=["test", "val"])
     parser.add_argument("--band", default=None)
     parser.add_argument("--max-exposures", type=int, default=None)
@@ -323,6 +345,8 @@ def main():
         help="add the PSFEx arm (4th method); ~10 min/exposure, so use few exposures",
     )
     args = parser.parse_args()
+    if args.psf_model is not None:
+        set_psf_model(args.psf_model)
 
     manifest = load_manifest(args.manifest)
     selected = [
