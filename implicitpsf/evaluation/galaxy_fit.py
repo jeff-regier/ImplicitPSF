@@ -18,9 +18,13 @@ Fitted fluxes are therefore relative to the in-stamp PSF — identical conventio
 every PSF arm in the recovery experiment, so comparisons are unaffected.
 """
 
+import os
+
 import torch
 
-OVERSAMPLE = 3  # must be odd: the fine lattice then contains native pixel centers
+# must be ODD so the fine lattice contains native pixel centers; raise to test PSF-convolution
+# undersampling of the deficit (GALREC_OVERSAMPLE=5,7,...).
+OVERSAMPLE = int(os.environ.get("GALREC_OVERSAMPLE", "3"))
 SUBINTEGRATE = 4  # even sub-grid per fine cell for galaxy integration (cusp safety)
 
 
