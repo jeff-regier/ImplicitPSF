@@ -76,10 +76,12 @@ class PSFDecoder(nn.Module):
         analytic_core=False,
         activation="relu",
         spectral_norm=False,
+        decoder_residual=False,
     ):
         super().__init__()
         self.patch_size = patch_size
         self.activation = activation
+        self.decoder_residual = decoder_residual
         self.n_freqs = n_freqs
         self.use_features = use_features
         self.film = film
@@ -224,7 +226,8 @@ class PSFDecoder(nn.Module):
                     activated = nn.functional.gelu(pre)
                 else:
                     activated = torch.relu(pre)
-                hidden = activated * (1.0 + scale) + shift
+                out = activated * (1.0 + scale) + shift
+                hidden = hidden + out if self.decoder_residual else out
             base = self.film_head(hidden).squeeze(-1)
         else:
             base = self.pixel_mlp(hidden).squeeze(-1)
@@ -273,6 +276,7 @@ class ImplicitPSF(pl.LightningModule):
         analytic_core=False,
         activation="relu",
         spectral_norm=False,
+        decoder_residual=False,
         loss_mode="single",
         blend_radius=22.0,
         blend_k_max=4,
@@ -352,6 +356,7 @@ class ImplicitPSF(pl.LightningModule):
             analytic_core=analytic_core,
             activation=activation,
             spectral_norm=spectral_norm,
+            decoder_residual=decoder_residual,
         )
 
     def _sinusoidal_position_encoding(self, positions):

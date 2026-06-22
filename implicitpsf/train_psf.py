@@ -193,6 +193,9 @@ def parse_args():
     parser.add_argument(
         "--spectral-norm", action="store_true", help="spectral-normalize the decoder Linears"
     )
+    parser.add_argument(
+        "--decoder-residual", action="store_true", help="skip connections in the FiLM decoder"
+    )
     parser.add_argument("--loss-mode", default="single", choices=["single", "blend"])
     parser.add_argument("--blend-radius", type=float, default=22.0)
     parser.add_argument("--blend-k-max", type=int, default=4)
@@ -286,6 +289,7 @@ def main():
         analytic_core=args.analytic_core,
         activation=args.activation,
         spectral_norm=args.spectral_norm,
+        decoder_residual=args.decoder_residual,
         loss_mode=args.loss_mode,
         blend_radius=args.blend_radius,
         blend_k_max=args.blend_k_max,
