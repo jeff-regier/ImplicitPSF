@@ -506,6 +506,9 @@ class ImplicitPSF(pl.LightningModule):
             )
             return chi2.mean()
 
+        if self.loss_mode == "clean":
+            return self._clean_target_loss(cutouts, batch, fluxes, star_types, context_mask)
+
         clean_mask = (star_types == 0) & (fluxes > 0)
         if not clean_mask.any():
             raise ValueError("batch contains no clean stars")
@@ -524,4 +527,25 @@ class ImplicitPSF(pl.LightningModule):
         amplitude = (w * observed * model).sum(dim=-1) / (w * model.square()).sum(dim=-1)
         residuals = observed - amplitude.unsqueeze(-1) * model
         chi2_per_star = (w * residuals.square()).sum(dim=-1) / n_valid
+        return chi2_per_star.mean()
+
+    def _clean_target_loss(self, cutouts, batch, fluxes, star_types, context_mask):
+        """Contamination correction: supervise the predicted PSF against the KNOWN clean truth PSF
+        (batch['clean_psf'], precomputed by add_clean_psf_target.py) instead of the contaminated
+        cutout, so the network learns to output the clean PSF from contaminated context. Pixels are
+        weighted by the clean target intensity so the bright core (the under-concentrated region we
+        must fix) dominates the shape match rather than the many faint wing pixels."""
+        clean_mask = (star_types == 0) & (fluxes > 0)
+        if not clean_mask.any():
+            raise ValueError("batch contains no clean stars")
+        pred_psfs = self(cutouts, batch["positions"], batch["colors"], fluxes, context_mask)
+        pred = rearrange(pred_psfs[clean_mask], "n h w -> n (h w)")
+        pred = pred / pred.sum(dim=-1, keepdim=True).clamp(min=1e-8)
+        target = rearrange(batch["clean_psf"][clean_mask], "n h w -> n (h w)")
+        valid = rearrange(batch["valid_pixels"].float()[clean_mask], "n h w -> n (h w)")
+        w = valid * target.clamp(min=0.0)  # core-weighted shape match
+        denom = w.sum(dim=-1)
+        if (denom == 0).any():
+            raise ValueError("clean star with no valid weighted pixels")
+        chi2_per_star = (w * (pred - target).square()).sum(dim=-1) / denom
         return chi2_per_star.mean()

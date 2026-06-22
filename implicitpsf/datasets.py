@@ -54,7 +54,7 @@ def make_batch(data, exposure_indices):
     """Assemble the model batch dict for the given exposures of a loaded file."""
     index = torch.as_tensor(exposure_indices, dtype=torch.long)
     positions = torch.stack([data["x_pixel"][index], data["y_pixel"][index]], dim=2)
-    return {
+    batch = {
         "cutouts": data["cutouts"][index],
         "variance": data["variance"][index],
         "valid_pixels": data["valid_pixels"][index],
@@ -64,6 +64,9 @@ def make_batch(data, exposure_indices):
         "star_types": data["star_type"][index],
         "star_ids": data["star_id"][index],
     }
+    if "clean_psf" in data:  # contamination-correction target (sim only; add_clean_psf_target.py)
+        batch["clean_psf"] = data["clean_psf"][index]
+    return batch
 
 
 def batch_to_device(batch, device):

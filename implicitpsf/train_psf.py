@@ -196,7 +196,7 @@ def parse_args():
     parser.add_argument(
         "--decoder-residual", action="store_true", help="skip connections in the FiLM decoder"
     )
-    parser.add_argument("--loss-mode", default="single", choices=["single", "blend"])
+    parser.add_argument("--loss-mode", default="single", choices=["single", "blend", "clean"])
     parser.add_argument("--blend-radius", type=float, default=22.0)
     parser.add_argument("--blend-k-max", type=int, default=4)
     parser.add_argument(
