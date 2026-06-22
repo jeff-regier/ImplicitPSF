@@ -132,9 +132,9 @@ def run(data, weight, central_g, fwhm, size, prior, n_steps, rng, pos_step=1.0, 
 
 def posterior_mean_contam(data, weight, central_g, fwhm, size, prior, n_steps, rng,
                           pos_step=1.0, log_step=0.3, burn=0.3):
-    """Run the calibrated chain and return the POSTERIOR-MEAN contaminant model stamp (the EM E-step:
-    the marginalized contaminating light to subtract, with the faint/sub-threshold sources included
-    in proportion to their posterior probability)."""
+    """Run the calibrated chain; return the POSTERIOR-MEAN contaminant model stamp (the EM E-step:
+    the marginalized contaminating light to subtract, faint/sub-threshold sources included in
+    proportion to their posterior probability)."""
     cf0 = float((data * central_g).sum() / (central_g**2).sum())
     state = (cf0, np.empty((0, 2)), np.empty(0))
     cur_ll = log_like(state, data, weight, central_g, fwhm, size)
