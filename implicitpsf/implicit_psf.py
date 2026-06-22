@@ -552,21 +552,25 @@ class ImplicitPSF(pl.LightningModule):
         return chi2_per_star.mean()
 
     def _clean_target_loss(self, cutouts, batch, fluxes, star_types, context_mask):
-        """Contamination correction: supervise the predicted PSF against the KNOWN clean truth
-        PSF (batch['clean_psf']) instead of the contaminated cutout, so the net learns to output
-        the clean PSF from contaminated context. Flat valid-pixel weighting: squared error already
-        emphasizes the bright core, and full weight on the wings stops over-concentration via
-        dropped wing flux (intensity-weighting zeroed the wings -> EE@r2 +25%)."""
+        """Contamination correction: supervise the predicted PSF against a noiseless CLEAN star
+        (flux x clean_psf, the known truth from add_clean_psf_target.py) using the SAME calibrated
+        production amplitude-fit inverse-variance chi2 as the 'single' loss -- so the core/wing
+        balance is set by the real noise model, not a hand-rolled shape MSE (which fails: core-
+        weighting over-concentrates, flat weighting collapses to uniform). The net attends to the
+        CONTAMINATED context but is supervised toward the clean PSF."""
         clean_mask = (star_types == 0) & (fluxes > 0)
         if not clean_mask.any():
             raise ValueError("batch contains no clean stars")
         pred_psfs = self(cutouts, batch["positions"], batch["colors"], fluxes, context_mask)
-        pred = rearrange(pred_psfs[clean_mask], "n h w -> n (h w)")
-        pred = pred / pred.sum(dim=-1, keepdim=True).clamp(min=1e-8)
-        target = rearrange(batch["clean_psf"][clean_mask], "n h w -> n (h w)")
-        w = rearrange(batch["valid_pixels"].float()[clean_mask], "n h w -> n (h w)")
-        denom = w.sum(dim=-1)
-        if (denom == 0).any():
+        clean_star = fluxes[..., None, None] * batch["clean_psf"]  # noiseless clean star, real flux
+        weights = batch["valid_pixels"].float() / batch["variance"]
+        target = rearrange(clean_star[clean_mask], "n h w -> n (h w)")
+        model = rearrange(pred_psfs[clean_mask], "n h w -> n (h w)")
+        w = rearrange(weights[clean_mask], "n h w -> n (h w)")
+        n_valid = w.count_nonzero(dim=-1).float()
+        if (n_valid == 0).any():
             raise ValueError("clean star with no valid pixels")
-        chi2_per_star = (w * (pred - target).square()).sum(dim=-1) / denom
+        amplitude = (w * target * model).sum(dim=-1) / (w * model.square()).sum(dim=-1)
+        residuals = target - amplitude.unsqueeze(-1) * model
+        chi2_per_star = (w * residuals.square()).sum(dim=-1) / n_valid
         return chi2_per_star.mean()
