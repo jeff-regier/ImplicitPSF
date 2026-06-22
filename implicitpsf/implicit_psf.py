@@ -4,6 +4,7 @@ import pytorch_lightning as pl
 import torch
 from einops import rearrange
 from torch import nn
+from torch.nn.utils.parametrizations import spectral_norm as apply_spectral_norm
 
 from implicitpsf.blend import blend_chi2, sample_grid
 
@@ -59,7 +60,7 @@ class PSFDecoder(nn.Module):
 
     N_HARMONICS = 5  # angular harmonics: 1, cos(t), sin(t), cos(2t), sin(2t)
 
-    def __init__(
+    def __init__(  # noqa: C901 — flat setup of the decoder layers
         self,
         feature_dim,
         patch_size,
@@ -73,9 +74,12 @@ class PSFDecoder(nn.Module):
         siren_omega=30.0,
         rff_sigma=None,
         analytic_core=False,
+        activation="relu",
+        spectral_norm=False,
     ):
         super().__init__()
         self.patch_size = patch_size
+        self.activation = activation
         self.n_freqs = n_freqs
         self.use_features = use_features
         self.film = film
@@ -117,35 +121,42 @@ class PSFDecoder(nn.Module):
             # elongation) learnable but starve e2, which needs u*v cross-terms
             n_axes = 4 if diagonal_coords else 2
             coord_dim = 2 * n_axes * n_freqs
-        activation = Sin(siren_omega) if siren else nn.ReLU(inplace=True)
+        def make_act():  # GeLU, ReLU, or SIREN sine — one factory for every hidden activation
+            if siren:
+                return Sin(siren_omega)
+            return nn.GELU() if activation == "gelu" else nn.ReLU(inplace=True)
+
+        def lin(in_dim, out_dim):  # spectral-normalized Linear when enabled (stabilizes training)
+            layer = nn.Linear(in_dim, out_dim)
+            return apply_spectral_norm(layer) if spectral_norm else layer
+
         self.coord_embedding = nn.Sequential(
-            nn.Linear(coord_dim, decoder_dim),
-            activation,
-            nn.Linear(decoder_dim, decoder_dim),
+            lin(coord_dim, decoder_dim),
+            make_act(),
+            lin(decoder_dim, decoder_dim),
         )
         if siren:  # SIREN init: first layer spreads input freqs, hidden keeps sin in range
             siren_init_(self.coord_embedding[0], coord_dim, siren_omega, first=True)
             siren_init_(self.coord_embedding[2], decoder_dim, siren_omega, first=False)
         if use_features:
-            self.feature_projection = nn.Linear(feature_dim, decoder_dim)
+            self.feature_projection = lin(feature_dim, decoder_dim)
 
         if film and use_features:
-            self.film_hidden = nn.ModuleList(nn.Linear(decoder_dim, decoder_dim) for _ in range(3))
+            self.film_hidden = nn.ModuleList(lin(decoder_dim, decoder_dim) for _ in range(3))
             self.film_generators = nn.ModuleList(
-                nn.Linear(feature_dim, 2 * decoder_dim) for _ in range(3)
+                lin(feature_dim, 2 * decoder_dim) for _ in range(3)
             )
-            self.film_head = nn.Sequential(nn.Linear(decoder_dim, 1), nn.Softplus())
+            self.film_head = nn.Sequential(lin(decoder_dim, 1), nn.Softplus())
             if siren:
                 for layer in self.film_hidden:
                     siren_init_(layer, decoder_dim, siren_omega, first=False)
         else:
-            inner = Sin(siren_omega) if siren else nn.ReLU(inplace=True)
             self.pixel_mlp = nn.Sequential(
-                nn.Linear(decoder_dim, decoder_dim),
-                inner,
-                nn.Linear(decoder_dim, decoder_dim),
-                Sin(siren_omega) if siren else nn.ReLU(inplace=True),
-                nn.Linear(decoder_dim, 1),
+                lin(decoder_dim, decoder_dim),
+                make_act(),
+                lin(decoder_dim, decoder_dim),
+                make_act(),
+                lin(decoder_dim, 1),
                 nn.Softplus(),  # strictly positive intensity
             )
             if siren:
@@ -207,7 +218,12 @@ class PSFDecoder(nn.Module):
             for layer, generator in zip(self.film_hidden, self.film_generators, strict=True):
                 scale, shift = generator(features).unsqueeze(2).chunk(2, dim=-1)
                 pre = layer(hidden)
-                activated = torch.sin(self.siren_omega * pre) if self.siren else torch.relu(pre)
+                if self.siren:
+                    activated = torch.sin(self.siren_omega * pre)
+                elif self.activation == "gelu":
+                    activated = nn.functional.gelu(pre)
+                else:
+                    activated = torch.relu(pre)
                 hidden = activated * (1.0 + scale) + shift
             base = self.film_head(hidden).squeeze(-1)
         else:
@@ -255,6 +271,8 @@ class ImplicitPSF(pl.LightningModule):
         siren_omega=30.0,
         rff_sigma=None,
         analytic_core=False,
+        activation="relu",
+        spectral_norm=False,
         loss_mode="single",
         blend_radius=22.0,
         blend_k_max=4,
@@ -332,6 +350,8 @@ class ImplicitPSF(pl.LightningModule):
             siren_omega=siren_omega,
             rff_sigma=rff_sigma,
             analytic_core=analytic_core,
+            activation=activation,
+            spectral_norm=spectral_norm,
         )
 
     def _sinusoidal_position_encoding(self, positions):

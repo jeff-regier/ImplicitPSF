@@ -187,6 +187,12 @@ def parse_args():
     parser.add_argument(
         "--analytic-core", action="store_true", help="add a context-predicted Gaussian core"
     )
+    parser.add_argument(
+        "--activation", default="relu", choices=["relu", "gelu"], help="decoder hidden activation"
+    )
+    parser.add_argument(
+        "--spectral-norm", action="store_true", help="spectral-normalize the decoder Linears"
+    )
     parser.add_argument("--loss-mode", default="single", choices=["single", "blend"])
     parser.add_argument("--blend-radius", type=float, default=22.0)
     parser.add_argument("--blend-k-max", type=int, default=4)
@@ -278,6 +284,8 @@ def main():
         siren_omega=args.siren_omega,
         rff_sigma=args.rff_sigma,
         analytic_core=args.analytic_core,
+        activation=args.activation,
+        spectral_norm=args.spectral_norm,
         loss_mode=args.loss_mode,
         blend_radius=args.blend_radius,
         blend_k_max=args.blend_k_max,
