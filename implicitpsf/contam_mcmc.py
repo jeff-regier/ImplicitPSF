@@ -41,15 +41,11 @@ def model_loglike(data, weight, central_flux, central_g, positions, fluxes, fwhm
     return -0.5 * float((weight * (data - model) ** 2).sum())
 
 
-def log_post(state, data, weight, central_g, fwhm, size, prior):
-    """log posterior up to const: likelihood + Poisson(K) + power-law(contaminant fluxes)."""
+def log_like(state, data, weight, central_g, fwhm, size):
+    """Likelihood only. All prior + proposal terms live in the move corrections (step), so the
+    reversible-jump bookkeeping is explicit and not double-counted with this."""
     cf, pos, fl = state
-    ll = model_loglike(data, weight, cf, central_g, pos, fl, fwhm, size)
-    k = len(fl)
-    lp = k * np.log(prior["lam"]) - prior["lam"]
-    if k:
-        lp += float(log_powerlaw(fl, prior["flux_lo"], prior["flux_hi"], prior["alpha"]).sum())
-    return ll + lp
+    return model_loglike(data, weight, cf, central_g, pos, fl, fwhm, size)
 
 
 def _birth(state, rng, size, prior):
@@ -92,24 +88,29 @@ def _move_flux(state, rng, log_step, prior):
     return (cf, pos, fl), lp + np.log(fl[j - 1] / old)
 
 
-def step(state, cur_lp, data, weight, central_g, fwhm, size, prior, rng, pos_step, log_step):
+def step(state, cur_ll, data, weight, central_g, fwhm, size, prior, rng, pos_step, log_step):
+    """One RJMCMC step. log_corr carries ALL prior/proposal terms (Green 1995): births propose flux
+    from the prior and position uniform, so those cancel; what remains is the Poisson count factor
+    lambda/(K+1), the death-selection 1/(K+1), and the move-type ratio (asymmetric at K=0)."""
     k = len(state[2])
     move = rng.choice(["birth", "death", "pos", "flux"]) if k else rng.choice(["birth", "flux"])
+    p_birth = 0.5 if k == 0 else 0.25  # current move-type probability of birth
     log_corr = 0.0
-    if move == "birth":
+    if move == "birth":  # alpha = L_ratio * lambda/(K+1) * p_death/(p_birth (K+1))
         prop = _birth(state, rng, size, prior)
-        log_corr = np.log(prior["lam"]) - np.log(k + 1)
-    elif move == "death":
+        log_corr = np.log(prior["lam"]) - 2 * np.log(k + 1) + np.log(0.25 / p_birth)
+    elif move == "death":  # reverse of birth
         prop = _death(state, rng)
-        log_corr = np.log(k) - np.log(prior["lam"])
+        p_birth_after = 0.5 if k - 1 == 0 else 0.25
+        log_corr = 2 * np.log(k) - np.log(prior["lam"]) + np.log(p_birth_after / 0.25)
     elif move == "pos":
         prop = _move_pos(state, rng, pos_step)
     else:
         prop, log_corr = _move_flux(state, rng, log_step, prior)
-    prop_lp = log_post(prop, data, weight, central_g, fwhm, size, prior)
-    if np.log(rng.uniform()) < (prop_lp - cur_lp + log_corr):
-        return prop, prop_lp
-    return state, cur_lp
+    prop_ll = log_like(prop, data, weight, central_g, fwhm, size)
+    if np.log(rng.uniform()) < (prop_ll - cur_ll + log_corr):
+        return prop, prop_ll
+    return state, cur_ll
 
 
 def run(data, weight, central_g, fwhm, size, prior, n_steps, rng, pos_step=1.0, log_step=0.3,
@@ -117,11 +118,11 @@ def run(data, weight, central_g, fwhm, size, prior, n_steps, rng, pos_step=1.0, 
     """RJMCMC; returns post-burn-in (count, total contaminant flux) per retained step."""
     cf0 = float((data * central_g).sum() / (central_g**2).sum())  # quick central init
     state = (cf0, np.empty((0, 2)), np.empty(0))
-    cur_lp = log_post(state, data, weight, central_g, fwhm, size, prior)
+    cur_ll = log_like(state, data, weight, central_g, fwhm, size)
     counts, totals = [], []
     burn_steps = int(burn * n_steps)
     for i in range(n_steps):
-        state, cur_lp = step(state, cur_lp, data, weight, central_g, fwhm, size, prior, rng,
+        state, cur_ll = step(state, cur_ll, data, weight, central_g, fwhm, size, prior, rng,
                              pos_step, log_step)
         if i >= burn_steps:
             counts.append(len(state[2]))
