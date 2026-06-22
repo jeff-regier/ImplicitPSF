@@ -552,11 +552,11 @@ class ImplicitPSF(pl.LightningModule):
         return chi2_per_star.mean()
 
     def _clean_target_loss(self, cutouts, batch, fluxes, star_types, context_mask):
-        """Contamination correction: supervise the predicted PSF against the KNOWN clean truth PSF
-        (batch['clean_psf'], from add_clean_psf_target.py) instead of the contaminated cutout, so the
-        net learns to output the clean PSF from contaminated context. Flat valid-pixel weighting: the
-        squared error already emphasizes the bright core, and full weight on the wings stops
-        over-concentration via dropped wing flux (intensity-weighting zeroed the wings -> EE@r2 +25%)."""
+        """Contamination correction: supervise the predicted PSF against the KNOWN clean truth
+        PSF (batch['clean_psf']) instead of the contaminated cutout, so the net learns to output
+        the clean PSF from contaminated context. Flat valid-pixel weighting: squared error already
+        emphasizes the bright core, and full weight on the wings stops over-concentration via
+        dropped wing flux (intensity-weighting zeroed the wings -> EE@r2 +25%)."""
         clean_mask = (star_types == 0) & (fluxes > 0)
         if not clean_mask.any():
             raise ValueError("batch contains no clean stars")
