@@ -218,6 +218,12 @@ def parse_args():
         help="attend only to point sources (stars) as context; gate out galaxies "
         "(production design; --no-point-source-context restores the galaxies-in-context ablation)",
     )
+    parser.add_argument(
+        "--cnn-encoder",
+        action="store_true",
+        help="encode context stamps with a CNN (spatial inductive bias) instead of a flat MLP; "
+        "better at filtering local contamination for the clean-target correction",
+    )
     parser.add_argument("--context-dropout-max", type=float, default=0.5)
     parser.add_argument("--no-attention", action="store_true")
     parser.add_argument(
@@ -299,6 +305,7 @@ def main():
         chi2_cap=args.chi2_cap,
         blend_max_targets=args.blend_max_targets,
         point_source_context=args.point_source_context,
+        cnn_encoder=args.cnn_encoder,
     )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)

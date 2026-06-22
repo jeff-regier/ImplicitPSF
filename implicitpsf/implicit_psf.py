@@ -284,10 +284,12 @@ class ImplicitPSF(pl.LightningModule):
         chi2_cap=None,
         blend_max_targets=None,
         point_source_context=True,
+        cnn_encoder=False,
     ):
         super().__init__()
         self.save_hyperparameters()
         self.point_source_context = point_source_context
+        self.cnn_encoder = cnn_encoder
 
         self.patch_size = patch_size
         self.ccd_size = (ccd_width, ccd_height)
@@ -308,13 +310,27 @@ class ImplicitPSF(pl.LightningModule):
         # color and log-flux of the queried object (flux enables brighter-fatter)
         self.scalar_embedding = nn.Linear(2, hidden_dim)
 
-        self.image_encoder = nn.Sequential(
-            nn.Linear(patch_size * patch_size, hidden_dim),
-            nn.ReLU(inplace=True),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(inplace=True),
-            nn.LayerNorm(hidden_dim),
-        )
+        if cnn_encoder:  # spatial inductive bias for filtering local contamination from the stamps
+            self.image_encoder = nn.Sequential(
+                nn.Conv2d(1, 32, 3, padding=1),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(32, 64, 3, padding=1, stride=2),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(64, 96, 3, padding=1, stride=2),
+                nn.ReLU(inplace=True),
+                nn.AdaptiveAvgPool2d(1),
+                nn.Flatten(),
+                nn.Linear(96, hidden_dim),
+                nn.LayerNorm(hidden_dim),
+            )
+        else:
+            self.image_encoder = nn.Sequential(
+                nn.Linear(patch_size * patch_size, hidden_dim),
+                nn.ReLU(inplace=True),
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.ReLU(inplace=True),
+                nn.LayerNorm(hidden_dim),
+            )
 
         # n_attn_layers == 1 is the original single-layer additive architecture and
         # must keep its module names so earlier checkpoints load; >= 2 stacks
@@ -407,7 +423,13 @@ class ImplicitPSF(pl.LightningModule):
         # scale-normalize stamps; absolute brightness enters via the log-flux scalar
         cutouts_flat = rearrange(cutouts, "b s h w -> b s (h w)")
         scale = cutouts_flat.abs().sum(dim=-1, keepdim=True) + 1e-8
-        image_features = self.image_encoder(cutouts_flat / scale)
+        normed = cutouts_flat / scale
+        if self.cnn_encoder:
+            b, s = cutouts.shape[:2]
+            images = normed.reshape(b * s, 1, self.patch_size, self.patch_size)
+            image_features = self.image_encoder(images).reshape(b, s, self.hidden_dim)
+        else:
+            image_features = self.image_encoder(normed)
 
         queries = pos_encodings + scalar_features
         keys = pos_encodings + scalar_features + image_features
