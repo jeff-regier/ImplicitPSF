@@ -33,7 +33,7 @@ def ee2(v):
 
 
 def bridge(clean_fn, data_dir, n_exposures=8, snr_min=80.0, max_per_exp=12):
-    """Run clean_fn on real contam-sim clean stars; return (mean, sem, n) of the per-star cleaning."""
+    """Run clean_fn on real contam-sim clean stars; return (mean, sem, n) of per-star cleaning."""
     set_psf_model("realistic")
     data = load_exposure_file(sorted(glob.glob(f"{data_dir}/*.pt"))[0])
     deltas = []
