@@ -121,11 +121,12 @@ def main():
     parser.add_argument("--n-sweeps", type=int, default=60)
     parser.add_argument("--n-exposures", type=int, default=4)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--grid-n", type=int, default=32, help="detection grid (16 = 4x faster)")
     args = parser.parse_args()
     rng = np.random.default_rng(args.seed)
     size = 32
     prior = {"lam": 2.0, "flux_lo": 100.0, "flux_hi": 3000.0, "alpha": 1.5}
-    centers = cell_centers(size, size, 2.5)
+    centers = cell_centers(size, args.grid_n, 2.5)
     columns = multisize_columns(centers, size)
     central_g = gaussian_source((size - 1) / 2.0, (size - 1) / 2.0, 4.0, size).ravel()
     n_cells = len(centers)

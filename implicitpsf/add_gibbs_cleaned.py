@@ -66,10 +66,11 @@ def main():
     parser.add_argument("--n-sweeps", type=int, default=40)
     parser.add_argument("--limit", type=int, default=None, help="process only N files")
     parser.add_argument("--max-stars", type=int, default=10**9, help="clean stars per exposure cap")
+    parser.add_argument("--grid-n", type=int, default=PATCH, help="detection grid (16 = 4x faster)")
     args = parser.parse_args()
 
     model = load_model(args.checkpoint)
-    centers = cell_centers(PATCH, PATCH, 2.5)
+    centers = cell_centers(PATCH, args.grid_n, 2.5)
     columns = multisize_columns(centers, PATCH)
     rng = np.random.default_rng(0)
     Path(args.out_dir).mkdir(parents=True, exist_ok=True)
