@@ -58,22 +58,22 @@ def make_stamp_sized(rng, central_flux, central_g, columns, detect, size_idx, fl
 
 
 def _cell_sized(resid, weight, cols_c, b_c, grid, log_w, log_odds_prior, size_logprior, rng):
-    """Resample one cell over (detect, size, flux); flux grid-marginalized per size."""
-    log_size = np.empty(len(SIZES))
-    log_posts = []
-    for s in range(len(SIZES)):
-        a = float((weight * resid * cols_c[s]).sum())
-        log_post = -0.5 * b_c[s] * (grid - a / b_c[s]) ** 2 + log_w
-        m = log_post.max()
-        slab = m + np.log(np.exp(log_post - m).sum())
-        log_size[s] = size_logprior[s] + 0.5 * a * a / b_c[s] + slab
-        log_posts.append(log_post)
+    """Resample one cell over (detect, size, flux); flux grid-marginalized per size.
+
+    Vectorized over the size set (cols_c is (n_sizes, n_pix), b_c (n_sizes,)) — identical math to
+    the per-size loop, just batched, so the SBC coverage is unchanged."""
+    a = (weight * resid) @ cols_c.T  # (n_sizes,) data projection per size
+    mean = a / b_c
+    log_post = -0.5 * b_c[:, None] * (grid[None, :] - mean[:, None]) ** 2 + log_w[None, :]
+    m = log_post.max(axis=1)  # (n_sizes,)
+    slab = m + np.log(np.exp(log_post - m[:, None]).sum(axis=1))
+    log_size = size_logprior + 0.5 * a * a / b_c + slab  # (n_sizes,)
     msz = log_size.max()
     log_on = log_odds_prior + msz + np.log(np.exp(log_size - msz).sum())  # summed over sizes
     if np.log(rng.uniform()) < -np.logaddexp(0.0, -log_on):
         ps = np.exp(log_size - msz)
         s = int(rng.choice(len(SIZES), p=ps / ps.sum()))
-        p = np.exp(log_posts[s] - log_posts[s].max())
+        p = np.exp(log_post[s] - log_post[s].max())
         f = float(rng.choice(grid, p=p / p.sum()))
         return True, s, f, f * cols_c[s]
     return False, 0, 0.0, np.zeros_like(cols_c[0])
