@@ -42,7 +42,8 @@ def _gibbs_cell(resid, weight, col, b_c, grid, log_w, log_odds_prior, rng):
     m = log_post.max()
     log_slab = 0.5 * a * a / b_c + m + np.log(np.exp(log_post - m).sum())  # evidence vs "off"=1
     log_on = log_odds_prior + log_slab
-    if np.log(rng.uniform()) < log_on - np.log1p(np.exp(log_on)):  # Bernoulli(sigmoid(log_on))
+    # Bernoulli(sigmoid(log_on)): z=1 iff log(u) < log p(on) = -softplus(-log_on) (stable, no overflow)
+    if np.log(rng.uniform()) < -np.logaddexp(0.0, -log_on):
         p = np.exp(log_post - m)
         f = float(rng.choice(grid, p=p / p.sum()))
         return True, f, f * col
