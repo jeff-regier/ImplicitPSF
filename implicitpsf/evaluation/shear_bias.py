@@ -58,7 +58,7 @@ def multiplicative_bias(df, tgal_over_tpsf):
                 "method": method,
                 "mean_dT_over_T": mean_dt,
                 "m": mean_dt / tgal_over_tpsf,
-                "n_stars": int(len(g)),
+                "n_stars": len(g),
             }
         )
     return pd.DataFrame(rows)
