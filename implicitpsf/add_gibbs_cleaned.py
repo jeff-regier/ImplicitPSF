@@ -65,6 +65,7 @@ def main():
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--n-sweeps", type=int, default=40)
     parser.add_argument("--limit", type=int, default=None, help="process only N files")
+    parser.add_argument("--offset", type=int, default=0, help="skip the first OFFSET files")
     parser.add_argument("--max-stars", type=int, default=10**9, help="clean stars per exposure cap")
     parser.add_argument("--grid-n", type=int, default=PATCH, help="detection grid (16 = 4x faster)")
     args = parser.parse_args()
@@ -74,7 +75,7 @@ def main():
     columns = multisize_columns(centers, PATCH)
     rng = np.random.default_rng(0)
     Path(args.out_dir).mkdir(parents=True, exist_ok=True)
-    files = sorted(glob.glob(f"{args.data_dir}/*.pt"))
+    files = sorted(glob.glob(f"{args.data_dir}/*.pt"))[args.offset :]
     if args.limit is not None:
         files = files[: args.limit]
     total = 0
