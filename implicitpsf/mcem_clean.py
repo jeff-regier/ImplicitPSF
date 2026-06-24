@@ -82,7 +82,7 @@ def write_kimpute(
     checkpoint, data_dir, out_dir, prior, n_keep, n_sweeps, limit, offset, device="cuda"
 ):
     """Write a K-imputation cleaned dataset (cutout_imp field) for the MCEM M-step."""
-    model = load_model(checkpoint)
+    model = load_model(checkpoint, device=device)  # NN renders on GPU, not CPU
     rng = np.random.default_rng(0)
     Path(out_dir).mkdir(parents=True, exist_ok=True)
     files = sorted(glob.glob(f"{data_dir}/*.pt"))[offset:]
@@ -99,7 +99,7 @@ def write_kimpute(
 
 def _smoke(checkpoint, data_dir, n_keep, n_sweeps, device):
     rng = np.random.default_rng(0)
-    model = load_model(checkpoint)
+    model = load_model(checkpoint, device=device)
     data = load_exposure_file(sorted(glob.glob(f"{data_dir}/*.pt"))[0])
     prior = {"lam": 1.0, "flux_lo": 100.0, "flux_hi": 2000.0, "alpha": 1.5}
     cols = build_columns(model, data)
