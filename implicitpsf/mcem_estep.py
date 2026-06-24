@@ -1,81 +1,147 @@
-"""Hierarchical E-step: per-star contamination + GLOBAL (lambda, alpha) shared across stars.
+"""Full hierarchical E-step: per-star contaminants + GLOBAL (lambda, alpha), inferred jointly.
 
-The contamination prior's rate lambda and Pareto slope alpha are unknown on real data, so we
-treat them as global random variables (manuscript sec:mcem) and infer them jointly from the
-many-star aggregate: per star, Gibbs-sample the contaminants given the current (lambda, alpha,
-PSF); pool the detection counts and fluxes; draw (lambda, alpha) from their conditionals (Gamma
-rate, griddy-Gibbs slope). recover() is the IDENTIFIABILITY GATE on synthetic data: with
-(lambda, alpha) unknown and started wrong, the aggregate must recover the generator's values --
-otherwise the PSF is free to absorb the contamination and the whole correction is unidentified.
+The contamination rate lambda and Pareto slope alpha are unknown on real data and are treated as
+global random variables (manuscript sec:mcem). The contaminants we care about are largely
+UNRESOLVABLE (sub-threshold), so we do NOT restrict to well-detected sources: the data constrains
+(lambda, alpha) through the aggregate. hier_gibbs() is the proper coupled sampler — each sweep
+updates every star's contaminants given the current (lambda, alpha), then draws (lambda, alpha)
+from their conditionals (Gamma rate; griddy-Gibbs slope) from the pooled configs, with the flux
+grid and detection log-odds recomputed as (lambda, alpha) move. hier_sbc() validates it: draw
+(lambda, alpha) from the SAME hyperprior used for inference, generate a star aggregate, infer,
+and require nominal credible-interval coverage. A wide-but-calibrated posterior is acceptable (we
+marginalize it in the EM); a biased one is not.
 """
 
 import argparse
 
 import numpy as np
 
+from implicitpsf.contam_gibbs import flux_grid
 from implicitpsf.contam_mcmc import log_powerlaw
 from implicitpsf.contam_model import cell_centers
 from implicitpsf.mcem_sampler import (
+    _cell,
     cov_columns,
     gaussian_cov,
     make_stamp,
     psf_covariance,
-    run,
     sample_prior,
 )
 
+# matched hyperpriors (generation == inference, for valid SBC)
+LAM_A0, LAM_B0 = 1.0, 1.0  # lambda ~ Gamma(a0, b0)
+ALPHA_GRID = np.linspace(1.1, 3.5, 30)
+ALPHA_C0, ALPHA_D0 = 2.0, 1.0  # alpha prior ~ grid weighted by Gamma(c0, d0)
 
-def update_lambda(total_count, n_stars, rng, a0=1.0, b0=1.0):
-    """Draw lambda | counts: Poisson(lambda)/star, Gamma(a0,b0) hyperprior -> Gamma conjugate."""
-    return float(rng.gamma(a0 + total_count, 1.0 / (b0 + n_stars)))
+
+def _alpha_logprior(grid):
+    return (ALPHA_C0 - 1) * np.log(grid) - ALPHA_D0 * grid
 
 
-def update_alpha(fluxes, lo, hi, rng, grid=None, c0=2.0, d0=1.0):
-    """Draw alpha | fluxes (truncated power-law) by griddy-Gibbs; Gamma(c0,d0) hyperprior."""
-    if grid is None:
-        grid = np.linspace(1.1, 3.5, 30)
+def draw_lambda_prior(rng):
+    return float(rng.gamma(LAM_A0, 1.0 / LAM_B0))
+
+
+def draw_alpha_prior(rng):
+    p = np.exp(_alpha_logprior(ALPHA_GRID) - _alpha_logprior(ALPHA_GRID).max())
+    return float(rng.choice(ALPHA_GRID, p=p / p.sum()))
+
+
+def update_lambda(total_count, n_stars, rng):
+    """Draw lambda | counts: Poisson(lambda)/star, Gamma conjugate."""
+    return float(rng.gamma(LAM_A0 + total_count, 1.0 / (LAM_B0 + n_stars)))
+
+
+def update_alpha(fluxes, lo, hi, rng):
+    """Draw alpha | fluxes (truncated power-law) by griddy-Gibbs with the matched hyperprior."""
     if len(fluxes) == 0:
-        return float(rng.choice(grid))
-    logp = np.array([log_powerlaw(fluxes, lo, hi, a).sum() for a in grid])
-    logp = logp + (c0 - 1) * np.log(grid) - d0 * grid
+        return draw_alpha_prior(rng)
+    logp = np.array([log_powerlaw(fluxes, lo, hi, a).sum() for a in ALPHA_GRID])
+    logp = logp + _alpha_logprior(ALPHA_GRID)
     p = np.exp(logp - logp.max())
-    return float(rng.choice(grid, p=p / p.sum()))
+    return float(rng.choice(ALPHA_GRID, p=p / p.sum()))
 
 
-def recover(rng, n_stars=40, n_sweeps=15, outer=6, lam_true=1.5, alpha_true=1.8):
-    """Identifiability gate: recover unknown (lambda, alpha) from a synthetic star aggregate."""
-    size, grid_n, core, lo, hi = 32, 16, 2.5, 100.0, 2000.0
+def hier_gibbs(datas, weight, central_g, columns, lo, hi, n_sweeps, rng, burn=0.4):
+    """Coupled hierarchical Gibbs over many stars; returns the post-burn (lambda, alpha) chain."""
+    n_cells, n_cov = columns.shape[0], columns.shape[1]
+    b = (weight * columns**2).sum(axis=2)
+    cg_norm = float((weight * central_g**2).sum())
+    log_ncov = -np.log(n_cov)
+    n_stars = len(datas)
+    detect = np.zeros((n_stars, n_cells), dtype=bool)
+    cov_idx = np.zeros((n_stars, n_cells), dtype=int)
+    flux = np.zeros((n_stars, n_cells))
+    contam = [np.zeros_like(d) for d in datas]
+    lam, alpha = draw_lambda_prior(rng), draw_alpha_prior(rng)
+    chain = []
+    burn_steps = int(burn * n_sweeps)
+    for sweep in range(n_sweeps):
+        grid, log_w = flux_grid({"flux_lo": lo, "flux_hi": hi, "alpha": alpha})
+        log_odds = np.log(lam / n_cells) - np.log1p(-lam / n_cells)
+        pooled_flux = []
+        for i, data in enumerate(datas):
+            di, ki, fi, cm = detect[i], cov_idx[i], flux[i], contam[i]
+            cf = (weight * (data - cm) * central_g).sum() / cg_norm
+            resid = data - cf * central_g - cm
+            for c in range(n_cells):
+                cur = fi[c] * columns[c, ki[c]] if di[c] else 0.0
+                on, k, f, contrib = _cell(resid + cur, weight, columns[c], b[c], grid, log_w,
+                                          log_odds, log_ncov, rng)
+                cm += contrib - cur
+                resid = data - cf * central_g - cm
+                di[c], ki[c], fi[c] = on, k, f
+            pooled_flux.extend(fi[di].tolist())
+        lam = update_lambda(int(detect.sum()), n_stars, rng)
+        alpha = update_alpha(np.array(pooled_flux), lo, hi, rng)
+        if sweep >= burn_steps:
+            chain.append((lam, alpha))
+    return np.array(chain)
+
+
+def _setup(size=32, grid_n=16, core=2.5):
     centers = cell_centers(size, grid_n, core)
     central_g = gaussian_cov((size - 1) / 2, (size - 1) / 2, 2.5 * np.eye(2), size).ravel()
     cols = cov_columns(centers, psf_covariance(central_g, size), size)
-    truth = {"lam": lam_true, "flux_lo": lo, "flux_hi": hi, "alpha": alpha_true}
-    stars = []
-    for _ in range(n_stars):
-        dt, ci, fl = sample_prior(rng, truth, len(centers), cols.shape[1])
-        stars.append(make_stamp(rng, 1e5, central_g, cols, dt, ci, fl, 30.0))
-    lam, alpha = 1.0, 2.8  # deliberately wrong start
-    print(f"true lam={lam_true} alpha={alpha_true}; init lam={lam} alpha={alpha}")
-    for t in range(outer):
-        prior = {"lam": lam, "flux_lo": lo, "flux_hi": hi, "alpha": alpha}
-        tot_count, all_flux = 0.0, []
-        for data, w in stars:
-            _, counts, _, pooled = run(data, w, central_g, cols, prior, n_sweeps, rng, n_keep=3)
-            tot_count += counts.mean()
-            all_flux.extend(pooled.tolist())
-        lam = update_lambda(tot_count, n_stars, rng)
-        alpha = update_alpha(np.array(all_flux), lo, hi, rng)
-        print(f"  iter {t}: lam={lam:.2f} alpha={alpha:.2f}  (pooled fluxes {len(all_flux)})")
+    return centers, central_g, cols
+
+
+def hier_sbc(rng, n_draws=10, n_stars=25, n_sweeps=60, lo=100.0, hi=2000.0, noise=30.0):
+    """Hierarchical SBC: draw (lambda, alpha) from the hyperprior, generate, infer, check 90% CI
+    coverage of both. Calibrated => ~0.90 (wide-but-calibrated is fine; biased is not)."""
+    centers, central_g, cols = _setup()
+    weight = np.full(central_g.shape, 1.0 / noise**2)
+    lcov = acov = 0
+    for _ in range(n_draws):
+        lam_t, alpha_t = draw_lambda_prior(rng), draw_alpha_prior(rng)
+        truth = {"lam": lam_t, "flux_lo": lo, "flux_hi": hi, "alpha": alpha_t}
+        datas = []
+        for _ in range(n_stars):
+            dt, ci, fl = sample_prior(rng, truth, len(centers), cols.shape[1])
+            data, _ = make_stamp(rng, 1e5, central_g, cols, dt, ci, fl, noise)
+            datas.append(data)
+        chain = hier_gibbs(datas, weight, central_g, cols, lo, hi, n_sweeps, rng)
+        llo, lhi = np.percentile(chain[:, 0], [5, 95])
+        alo, ahi = np.percentile(chain[:, 1], [5, 95])
+        lcov += llo <= lam_t <= lhi
+        acov += alo <= alpha_t <= ahi
+        print(f"  truth lam={lam_t:.2f} alpha={alpha_t:.2f}; post lam[{llo:.2f},{lhi:.2f}] "
+              f"alpha[{alo:.2f},{ahi:.2f}]")
+    return lcov / n_draws, acov / n_draws
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=["recover"], default="recover")
-    parser.add_argument("--n-stars", type=int, default=40)
-    parser.add_argument("--n-sweeps", type=int, default=15)
-    parser.add_argument("--outer", type=int, default=6)
+    parser.add_argument("--mode", choices=["sbc"], default="sbc")
+    parser.add_argument("--n-draws", type=int, default=10)
+    parser.add_argument("--n-stars", type=int, default=25)
+    parser.add_argument("--n-sweeps", type=int, default=60)
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
-    recover(np.random.default_rng(args.seed), args.n_stars, args.n_sweeps, args.outer)
+    rng = np.random.default_rng(args.seed)
+    lc, ac = hier_sbc(rng, args.n_draws, args.n_stars, args.n_sweeps)
+    print(f"hierarchical SBC ({args.n_draws} draws): lambda coverage {lc:.2f}, "
+          f"alpha coverage {ac:.2f}  (want ~0.90)")
 
 
 if __name__ == "__main__":
