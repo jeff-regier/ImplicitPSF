@@ -55,3 +55,7 @@ runs/
 results/*.parquet
 *.pt
 *.pth
+
+# local agent config + run logs
+.claude/
+logs/

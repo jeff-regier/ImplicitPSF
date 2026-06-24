@@ -257,8 +257,9 @@ magnitude of the correction. Crucially, its hyperparameters --- the per-cell det
 $\lambda$ and the flux power-law slope $\alpha$ --- are unknown on real data, so we do not fix
 them: they are \emph{global} random variables shared across stars, with weakly-informative
 hyperpriors (a conjugate Gamma rate; a Gamma slope), and are inferred jointly. The contamination
-level is thus learned from the many-star aggregate rather than assumed, and \S\ref{sec:sim} shows
-the inferred $(\lambda,\alpha)$ recover the generator's together with the PSF and galaxy sizes. We place \emph{no} prior on the network weights $\theta$ --- we
+level is thus learned from the many-star aggregate rather than assumed; \S\ref{sec:sim} tests on
+simulations with a known PSF field whether the inferred $(\lambda,\alpha)$ recover the generator's
+together with the PSF concentration and galaxy sizes. We place \emph{no} prior on the network weights $\theta$ --- we
 seek the maximum marginal-likelihood PSF, not a Bayesian network --- and none on the central
 amplitudes $a_i$. These are parameters: $a_i$ is profiled in closed form and $\theta$ is fit
 in the M-step. Only the counts-endowed nuisances are marginalized,
@@ -277,11 +278,11 @@ resampling detection, centroid, and covariance per cell, and --- globally across
 resampling $(\lambda,\alpha)$ from the pooled contaminant sufficient statistics, a hierarchical
 Gibbs step; the Monte Carlo objective is
 $\hat Q(\theta\mid\theta^{(t)})=K^{-1}\sum_{i,k}\log p(\mathbf{y}_i\mid\theta,\mathbf{z}_i^{(t,k)})$.
-(ii) \emph{M-step} --- increase $\hat Q$ by stochastic gradient descent, a generalized EM step
-\citep{dempster1977em} since the network is not maximized exactly; operationally each minibatch
-draws one of the $K$ imputations per star and subtracts it, training against the multiply
-imputed cleaned stars so the contaminant posterior \emph{uncertainty} propagates into the fit
-rather than a point estimate. (iii) Iterate until the PSF and the recovered galaxy sizes
+(ii) \emph{M-step} --- increase $\hat Q$ by stochastic gradient descent warm-started from
+$\theta^{(t)}$, a generalized EM step \citep{dempster1977em} since the network is not maximized
+exactly; operationally each minibatch draws one of the $K$ imputations per star and subtracts it,
+training against the multiply imputed cleaned stars so the contaminant posterior \emph{uncertainty}
+propagates into the fit rather than a point estimate. (iii) Iterate until the PSF and the recovered galaxy sizes
 (\S\ref{sec:sim}) stop changing; later iterations' sharper central template removes residual
 contamination that the contaminated initial template leaves. We increase $K$ across iterations
 and monitor Monte Carlo error \citep{booth1999mcem,levine2001mcem}; a stochastic-approximation
