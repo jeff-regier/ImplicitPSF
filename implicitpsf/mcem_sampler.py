@@ -131,7 +131,7 @@ def run(data, weight, central_g, columns, prior, n_sweeps, rng, burn=0.3, n_keep
     cov_idx = np.zeros(n_cells, dtype=int)
     flux = np.zeros(n_cells)
     contam = np.zeros_like(data)
-    samples, counts, totals = [], [], []
+    samples, counts, totals, pooled_flux = [], [], [], []
     burn_steps = int(burn * n_sweeps)
     keep_every = max(1, (n_sweeps - burn_steps) // n_keep)
     for sweep in range(n_sweeps):
@@ -148,7 +148,8 @@ def run(data, weight, central_g, columns, prior, n_sweeps, rng, burn=0.3, n_keep
             samples.append(contam.copy())
             counts.append(int(detect.sum()))
             totals.append(float(flux[detect].sum()))
-    return np.array(samples), np.array(counts), np.array(totals)
+            pooled_flux.extend(flux[detect].tolist())
+    return np.array(samples), np.array(counts), np.array(totals), np.array(pooled_flux)
 
 
 def sbc_coverage(rng, prior, n_draws, n_sweeps, size=32, grid_n=16, core=2.5, noise=30.0):
@@ -161,7 +162,7 @@ def sbc_coverage(rng, prior, n_draws, n_sweeps, size=32, grid_n=16, core=2.5, no
     for _ in range(n_draws):
         dt, ci, fl = sample_prior(rng, prior, len(centers), cols.shape[1])
         data, w = make_stamp(rng, 1e5, central_g, cols, dt, ci, fl, noise)
-        _, counts, totals = run(data, w, central_g, cols, prior, n_sweeps, rng, n_keep=n_sweeps)
+        _, counts, totals, _ = run(data, w, central_g, cols, prior, n_sweeps, rng, n_keep=n_sweeps)
         tlo, thi = np.percentile(totals, [5, 95])
         clo, chi = np.percentile(counts, [5, 95])
         fcov += tlo <= fl[dt].sum() <= thi
@@ -213,8 +214,8 @@ def _mixing_test(rng, prior, n_sweeps, n_chains=4, size=32, grid_n=16, core=2.5,
     data, w = make_stamp(rng, 1e5, central_g, cols, dt, ci, fl, noise)
     chains = []
     for _ in range(n_chains):
-        _, _, totals = run(data, w, central_g, cols, prior, n_sweeps,
-                           np.random.default_rng(rng.integers(1 << 30)), n_keep=n_sweeps)
+        _, _, totals, _ = run(data, w, central_g, cols, prior, n_sweeps,
+                              np.random.default_rng(rng.integers(1 << 30)), n_keep=n_sweeps)
         chains.append(totals)
     return rhat_ess(np.array(chains))
 
