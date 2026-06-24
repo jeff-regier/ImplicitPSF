@@ -35,7 +35,7 @@ def central_psf_stamps(model, data, index, star_idx):
     return render_at(model, batch, q, torch.zeros(len(star_idx)), oversample=1).numpy()
 
 
-def clean_exposure(model, data, index, columns, n_sweeps, rng, max_stars):
+def clean_exposure(model, data, index, columns, n_sweeps, rng, max_stars, prior):
     """Replace clean stars' cutouts with Gibbs-cleaned versions; returns how many were cleaned."""
     st = data["star_type"][index].numpy()
     clean = np.nonzero(st == 0)[0][:max_stars]
@@ -49,7 +49,7 @@ def clean_exposure(model, data, index, columns, n_sweeps, rng, max_stars):
         cg = np.clip(centrals[k], 0, None).ravel()
         cg = cg / (cg.sum() + 1e-12)
         w = (val[j].ravel() > 0) / np.clip(var[j].ravel(), 1e-6, None)
-        contam, _, _ = run_sized(cut[j].ravel(), w, cg, columns, PRIOR, n_sweeps, rng)
+        contam, _, _ = run_sized(cut[j].ravel(), w, cg, columns, prior, n_sweeps, rng)
         data["cutouts"][index][j] = torch.from_numpy(
             (cut[j].ravel() - contam).reshape(PATCH, PATCH)
         )
@@ -68,8 +68,11 @@ def main():
     parser.add_argument("--offset", type=int, default=0, help="skip the first OFFSET files")
     parser.add_argument("--max-stars", type=int, default=10**9, help="clean stars per exposure cap")
     parser.add_argument("--grid-n", type=int, default=PATCH, help="detection grid (16 = 4x faster)")
+    parser.add_argument("--prior-lam", type=float, default=PRIOR["lam"], help="contam rate (lower=less)")
+    parser.add_argument("--prior-flux-hi", type=float, default=PRIOR["flux_hi"], help="flux ceiling")
     args = parser.parse_args()
 
+    prior = {**PRIOR, "lam": args.prior_lam, "flux_hi": args.prior_flux_hi}
     model = load_model(args.checkpoint)
     centers = cell_centers(PATCH, args.grid_n, 2.5)
     columns = multisize_columns(centers, PATCH)
@@ -82,7 +85,7 @@ def main():
     for path in files:
         data = load_exposure_file(path)
         n = sum(
-            clean_exposure(model, data, i, columns, args.n_sweeps, rng, args.max_stars)
+            clean_exposure(model, data, i, columns, args.n_sweeps, rng, args.max_stars, prior)
             for i in range(len(data["cutouts"]))
         )
         torch.save(data, Path(args.out_dir) / Path(path).name)
