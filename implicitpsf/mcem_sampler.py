@@ -46,7 +46,9 @@ def psf_covariance(central_g, size):
 
 
 # intrinsic broadening grid (sigma px, ellipticity, orientation): 0=point, isotropic, elliptical.
-_SIZES = np.array([0.0, 2.0, 4.0])
+# NOTE: the broad sigma=4 covariances were dropped -- in the EM loop they let contaminants absorb
+# the host star's genuine PSF wings (over-cleaning -> a biased over-sharp fixed point, dEE +0.020).
+_SIZES = np.array([0.0, 2.0])
 _ELLIP = 0.4
 _PHIS = np.array([0.0, 45.0, 90.0, 135.0])
 
