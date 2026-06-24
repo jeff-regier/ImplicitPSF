@@ -17,7 +17,13 @@ from pathlib import Path
 import torch
 from tqdm import tqdm
 
-from implicitpsf.datasets import BATCH_KEYS, load_exposure_file, make_batch, stable_seed
+from implicitpsf.datasets import (
+    BATCH_KEYS,
+    load_exposure_file,
+    make_batch,
+    sample_imputations,
+    stable_seed,
+)
 from implicitpsf.implicit_psf import ImplicitPSF
 from implicitpsf.provenance import checkpoint_provenance
 from implicitpsf.splits import files_for_split, load_manifest
@@ -62,6 +68,7 @@ def split_file_indices(manifest, split, band):
 def file_batches(data_dir, file_name, indices, batch_size, phase, epoch, shuffle):
     """Batches from one file, restricted to manifest-selected exposures."""
     data = load_exposure_file(Path(data_dir) / file_name)
+    sample_imputations(data, stable_seed("imp", file_name, epoch))  # MCEM: fresh imputation/epoch
     indices = list(indices)
     if shuffle:
         random.Random(stable_seed("exposures", file_name, epoch)).shuffle(indices)

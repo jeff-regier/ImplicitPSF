@@ -133,18 +133,23 @@ def run(data, weight, central_g, columns, prior, n_sweeps, rng, burn=0.3, n_keep
     contam = np.zeros_like(data)
     samples, counts, totals, pooled_flux = [], [], [], []
     burn_steps = int(burn * n_sweeps)
-    keep_every = max(1, (n_sweeps - burn_steps) // n_keep)
+    post = list(range(burn_steps, n_sweeps))
+    if n_keep >= len(post):
+        keep_idx = set(post)  # keep all post-burn (e.g. SBC)
+    else:
+        keep_idx = set(np.linspace(burn_steps, n_sweeps - 1, n_keep).astype(int).tolist())
     for sweep in range(n_sweeps):
         central_flux = (weight * (data - contam) * central_g).sum() / cg_norm  # PROFILE, no draw
         resid = data - central_flux * central_g - contam
         for c in range(n_cells):
             cur = flux[c] * columns[c, cov_idx[c]] if detect[c] else 0.0
-            on, k, f, contrib = _cell(resid + cur, weight, columns[c], b[c], grid, log_w,
-                                      log_odds, log_ncov, rng)
+            on, k, f, contrib = _cell(
+                resid + cur, weight, columns[c], b[c], grid, log_w, log_odds, log_ncov, rng
+            )
             contam += contrib - cur
             resid = data - central_flux * central_g - contam
             detect[c], cov_idx[c], flux[c] = on, k, f
-        if sweep >= burn_steps and (sweep - burn_steps) % keep_every == 0:
+        if sweep in keep_idx:
             samples.append(contam.copy())
             counts.append(int(detect.sum()))
             totals.append(float(flux[detect].sum()))
@@ -182,10 +187,10 @@ def rhat_ess(chains):
     flat = chains.ravel()
     if flat.var() <= 0:
         return float(rhat), float(m * n)
-    ac = np.correlate(flat - flat.mean(), flat - flat.mean(), "full")[len(flat) - 1:]
+    ac = np.correlate(flat - flat.mean(), flat - flat.mean(), "full")[len(flat) - 1 :]
     ac = ac / ac[0]
     neg = np.where(ac < 0)[0]
-    tau = 1 + 2 * ac[1: (neg[0] if len(neg) else len(ac))].sum()
+    tau = 1 + 2 * ac[1 : (neg[0] if len(neg) else len(ac))].sum()
     return float(rhat), float(m * n / max(tau, 1.0))
 
 
@@ -201,8 +206,10 @@ def _self_test():
     data, _ = make_stamp(rng, 1e5, central_g, cols, dt, ci, fl, 30.0)
     print(f"n_cells {len(centers)}, n_cov {cols.shape[1]} (point + iso + elliptical)")
     print(f"Sigma_psf diag {np.diag(sigma_psf).round(2)}; injected {int(dt.sum())} contaminants")
-    print(f"cov0 (point) == Sigma_psf? kernel peak matches PSF: "
-          f"{np.allclose(cols[0, 0].sum(), 1.0)}; data finite {np.isfinite(data).all()}")
+    print(
+        f"cov0 (point) == Sigma_psf? kernel peak matches PSF: "
+        f"{np.allclose(cols[0, 0].sum(), 1.0)}; data finite {np.isfinite(data).all()}"
+    )
 
 
 def _mixing_test(rng, prior, n_sweeps, n_chains=4, size=32, grid_n=16, core=2.5, noise=30.0):
@@ -214,8 +221,16 @@ def _mixing_test(rng, prior, n_sweeps, n_chains=4, size=32, grid_n=16, core=2.5,
     data, w = make_stamp(rng, 1e5, central_g, cols, dt, ci, fl, noise)
     chains = []
     for _ in range(n_chains):
-        _, _, totals, _ = run(data, w, central_g, cols, prior, n_sweeps,
-                              np.random.default_rng(rng.integers(1 << 30)), n_keep=n_sweeps)
+        _, _, totals, _ = run(
+            data,
+            w,
+            central_g,
+            cols,
+            prior,
+            n_sweeps,
+            np.random.default_rng(rng.integers(1 << 30)),
+            n_keep=n_sweeps,
+        )
         chains.append(totals)
     return rhat_ess(np.array(chains))
 
@@ -231,12 +246,16 @@ def main():
     prior = {"lam": 2.0, "flux_lo": 100.0, "flux_hi": 3000.0, "alpha": 1.5}
     if args.mode == "sbc":
         f, c = sbc_coverage(rng, prior, args.n_draws, args.n_sweeps)
-        print(f"MCEM-sampler SBC ({args.n_draws} draws, {args.n_sweeps} sweeps): "
-              f"flux {f:.2f}, count {c:.2f}  (want ~0.90)")
+        print(
+            f"MCEM-sampler SBC ({args.n_draws} draws, {args.n_sweeps} sweeps): "
+            f"flux {f:.2f}, count {c:.2f}  (want ~0.90)"
+        )
     elif args.mode == "mixing":
         r, ess = _mixing_test(rng, prior, args.n_sweeps)
-        print(f"mixing ({args.n_sweeps} sweeps, 4 chains): R-hat {r:.3f} (want ~1), "
-              f"ESS {ess:.0f}  (total contaminant flux)")
+        print(
+            f"mixing ({args.n_sweeps} sweeps, 4 chains): R-hat {r:.3f} (want ~1), "
+            f"ESS {ess:.0f}  (total contaminant flux)"
+        )
     else:
         _self_test()
 

@@ -69,6 +69,21 @@ def make_batch(data, exposure_indices):
     return batch
 
 
+def sample_imputations(data, seed):
+    """MCEM M-step: if K-imputation cutouts (cutout_imp, shape (E,S,K,H,W)) are present, replace
+    cutouts with ONE random imputation per star (epoch-seeded). Over epochs the SGD M-step then
+    Monte-Carlo-averages the loss over the contaminant posterior -- no posterior mean."""
+    if "cutout_imp" not in data:
+        return
+    imp = data["cutout_imp"]
+    n_exp, n_star, n_imp = imp.shape[0], imp.shape[1], imp.shape[2]
+    gen = torch.Generator().manual_seed(int(seed))
+    choice = torch.randint(0, n_imp, (n_exp, n_star), generator=gen)
+    ei = torch.arange(n_exp)[:, None]
+    si = torch.arange(n_star)[None, :]
+    data["cutouts"] = imp[ei, si, choice]
+
+
 def batch_to_device(batch, device):
     """Move every tensor in a batch dict to a device."""
     return {key: value.to(device) for key, value in batch.items()}
