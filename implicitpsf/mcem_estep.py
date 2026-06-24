@@ -25,6 +25,7 @@ from implicitpsf.mcem_sampler import (
     gaussian_cov,
     make_stamp,
     psf_covariance,
+    rhat_ess,
     sample_prior,
 )
 
@@ -62,8 +63,19 @@ def update_alpha(fluxes, lo, hi, rng):
     return float(rng.choice(ALPHA_GRID, p=p / p.sum()))
 
 
+def _collapsed_log_odds(total, di_c, n_stars, n_cells):
+    """Per-cell detection log-odds with lambda MARGINALIZED (Gamma-Poisson predictive rate from the
+    running total count, less this cell) -- decouples detections from a stale sampled lambda."""
+    rate = (LAM_A0 + total - int(di_c)) / (LAM_B0 + n_stars)  # E[lambda | counts elsewhere]
+    p = rate / n_cells
+    return np.log(p) - np.log1p(-p)
+
+
 def hier_gibbs(datas, weight, central_g, columns, lo, hi, n_sweeps, rng, burn=0.4):
-    """Coupled hierarchical Gibbs over many stars; returns the post-burn (lambda, alpha) chain."""
+    """Hierarchical Gibbs over many stars with lambda COLLAPSED out of the detection update: cells
+    share a running total count via the Gamma-Poisson predictive rate, so the chain is not trapped
+    by a stale sampled lambda (the un-collapsed version had R-hat 1.23 / ESS 13). The reported
+    lambda chain is drawn from lambda | z each sweep. Returns the post-burn (lambda,alpha) chain."""
     n_cells, n_cov = columns.shape[0], columns.shape[1]
     b = (weight * columns**2).sum(axis=2)
     cg_norm = float((weight * central_g**2).sum())
@@ -73,12 +85,12 @@ def hier_gibbs(datas, weight, central_g, columns, lo, hi, n_sweeps, rng, burn=0.
     cov_idx = np.zeros((n_stars, n_cells), dtype=int)
     flux = np.zeros((n_stars, n_cells))
     contam = [np.zeros_like(d) for d in datas]
-    lam, alpha = draw_lambda_prior(rng), draw_alpha_prior(rng)
+    alpha = draw_alpha_prior(rng)
+    total = 0  # running total detections across all stars/cells (lambda integrated out)
     chain = []
     burn_steps = int(burn * n_sweeps)
     for sweep in range(n_sweeps):
         grid, log_w = flux_grid({"flux_lo": lo, "flux_hi": hi, "alpha": alpha})
-        log_odds = np.log(lam / n_cells) - np.log1p(-lam / n_cells)
         pooled_flux = []
         for i, data in enumerate(datas):
             di, ki, fi, cm = detect[i], cov_idx[i], flux[i], contam[i]
@@ -86,13 +98,15 @@ def hier_gibbs(datas, weight, central_g, columns, lo, hi, n_sweeps, rng, burn=0.
             resid = data - cf * central_g - cm
             for c in range(n_cells):
                 cur = fi[c] * columns[c, ki[c]] if di[c] else 0.0
+                log_odds = _collapsed_log_odds(total, di[c], n_stars, n_cells)
                 on, k, f, contrib = _cell(resid + cur, weight, columns[c], b[c], grid, log_w,
                                           log_odds, log_ncov, rng)
                 cm += contrib - cur
                 resid = data - cf * central_g - cm
+                total += int(on) - int(di[c])
                 di[c], ki[c], fi[c] = on, k, f
             pooled_flux.extend(fi[di].tolist())
-        lam = update_lambda(int(detect.sum()), n_stars, rng)
+        lam = update_lambda(total, n_stars, rng)
         alpha = update_alpha(np.array(pooled_flux), lo, hi, rng)
         if sweep >= burn_steps:
             chain.append((lam, alpha))
@@ -130,15 +144,52 @@ def hier_sbc(rng, n_draws=10, n_stars=25, n_sweeps=60, lo=100.0, hi=2000.0, nois
     return lcov / n_draws, acov / n_draws
 
 
+def hier_mixing(rng, lam_t=1.0, alpha_t=1.8, n_stars=25, n_sweeps=120, n_chains=4,
+                lo=100.0, hi=2000.0, noise=30.0):
+    """Multi-chain Gelman-Rubin R-hat + ESS on the GLOBAL (lambda, alpha) chain for ONE generated
+    star aggregate. Over-dispersed inits (independent prior draws per chain) -> R-hat ~1 means the
+    coupled (lambda, detections) Gibbs mixes; R-hat >> 1 flags the self-consistent-mode trap."""
+    centers, central_g, cols = _setup()
+    weight = np.full(central_g.shape, 1.0 / noise**2)
+    truth = {"lam": lam_t, "flux_lo": lo, "flux_hi": hi, "alpha": alpha_t}
+    datas = []
+    for _ in range(n_stars):
+        dt, ci, fl = sample_prior(rng, truth, len(centers), cols.shape[1])
+        data, _ = make_stamp(rng, 1e5, central_g, cols, dt, ci, fl, noise)
+        datas.append(data)
+    lam_chains, alpha_chains = [], []
+    for _ in range(n_chains):
+        chain = hier_gibbs(datas, weight, central_g, cols, lo, hi, n_sweeps, rng)
+        lam_chains.append(chain[:, 0])
+        alpha_chains.append(chain[:, 1])
+    lam_r, lam_ess = rhat_ess(np.array(lam_chains))
+    alpha_r, alpha_ess = rhat_ess(np.array(alpha_chains))
+    for j, ch in enumerate(lam_chains):
+        print(f"  chain {j}: lam mean {ch.mean():.3f} (init {ch[0]:.3f}); "
+              f"alpha mean {alpha_chains[j].mean():.3f}")
+    pooled_lam = np.concatenate(lam_chains)
+    pooled_alpha = np.concatenate(alpha_chains)
+    llo, lhi = np.percentile(pooled_lam, [5, 95])
+    alo, ahi = np.percentile(pooled_alpha, [5, 95])
+    print(f"R-hat lam {lam_r:.3f} ESS {lam_ess:.0f}; R-hat alpha {alpha_r:.3f} "
+          f"ESS {alpha_ess:.0f}  (want R-hat<1.1, ESS>=100)")
+    print(f"truth lam={lam_t} in [{llo:.3f},{lhi:.3f}]? {llo <= lam_t <= lhi}; "
+          f"truth alpha={alpha_t} in [{alo:.3f},{ahi:.3f}]? {alo <= alpha_t <= ahi}")
+    return lam_r, lam_ess, alpha_r, alpha_ess
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=["sbc"], default="sbc")
+    parser.add_argument("--mode", choices=["sbc", "mixing"], default="sbc")
     parser.add_argument("--n-draws", type=int, default=10)
     parser.add_argument("--n-stars", type=int, default=25)
     parser.add_argument("--n-sweeps", type=int, default=60)
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
     rng = np.random.default_rng(args.seed)
+    if args.mode == "mixing":
+        hier_mixing(rng, n_stars=args.n_stars, n_sweeps=args.n_sweeps)
+        return
     lc, ac = hier_sbc(rng, args.n_draws, args.n_stars, args.n_sweeps)
     print(f"hierarchical SBC ({args.n_draws} draws): lambda coverage {lc:.2f}, "
           f"alpha coverage {ac:.2f}  (want ~0.90)")
