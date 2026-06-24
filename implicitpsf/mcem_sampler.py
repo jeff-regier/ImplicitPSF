@@ -12,6 +12,8 @@ post-burn samples (NOT the mean) for the Monte Carlo E-step. Global (lambda, alp
 (hierarchical step); here they are fixed inputs. SBC- and mixing-gated (see sbc_coverage, rhat_ess).
 """
 
+import argparse
+
 import numpy as np
 
 from implicitpsf.contam_gibbs import flux_grid
@@ -218,8 +220,6 @@ def _mixing_test(rng, prior, n_sweeps, n_chains=4, size=32, grid_n=16, core=2.5,
 
 
 def main():
-    import argparse
-
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=["selftest", "sbc", "mixing"], default="selftest")
     parser.add_argument("--n-draws", type=int, default=20)
