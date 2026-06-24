@@ -20,7 +20,7 @@ from implicitpsf.add_gibbs_cleaned import central_psf_stamps
 from implicitpsf.baselines.implicit_runner import load_model
 from implicitpsf.contam_model import cell_centers
 from implicitpsf.datasets import load_exposure_file
-from implicitpsf.mcem_sampler import cov_columns, psf_covariance, run
+from implicitpsf.mcem_sampler import cov_columns, psf_covariance, run_batch_gpu
 from implicitpsf.simulate import PATCH
 
 
@@ -35,28 +35,51 @@ def build_columns(model, data, grid_n=16):
     return cov_columns(centers, psf_covariance(rep, PATCH), PATCH)
 
 
-def clean_exposure_kimpute(model, data, index, cols, prior, n_keep, n_sweeps, rng, max_stars=10**9):
-    """Return (clean star indices, (n_clean, K, n_pix) cleaned imputations) for one exposure."""
-    st = data["star_type"][index].numpy()
-    clean = np.nonzero(st == 0)[0][:max_stars]
-    if len(clean) == 0:
-        return clean, np.zeros((0, n_keep, PATCH * PATCH))
-    centrals = central_psf_stamps(model, data, index, clean)  # (n_clean, PATCH, PATCH)
-    cut = data["cutouts"][index].numpy()
-    var = data["variance"][index].numpy()
-    val = data["valid_pixels"][index].numpy()
-    out = np.empty((len(clean), n_keep, PATCH * PATCH))
-    for n, (j, cen) in enumerate(zip(clean, centrals, strict=True)):
-        cg = np.clip(cen, 0, None).ravel()
-        cg = cg / (cg.sum() + 1e-12)
-        w = (val[j].ravel() > 0) / np.clip(var[j].ravel(), 1e-6, None)
-        samples, _, _, _ = run(cut[j].ravel(), w, cg, cols, prior, n_sweeps, rng, n_keep=n_keep)
-        out[n] = cut[j].ravel()[None, :] - samples
-    return clean, out
+def _gather_clean_stars(model, data, cols_npix):
+    """Stack every clean star in a file into (B, npix) data/weight/central arrays + their (exp,star)
+    index. Centrals are the NN-rendered PSF per star (per exposure); weight = inverse-variance."""
+    st = data["star_type"].numpy()  # (E, S)
+    cut = data["cutouts"].numpy().reshape(st.shape[0], st.shape[1], -1)
+    var = data["variance"].numpy().reshape(cut.shape)
+    val = data["valid_pixels"].numpy().reshape(cut.shape)
+    datas, weights, centrals, idx = [], [], [], []
+    for i in range(st.shape[0]):
+        clean = np.nonzero(st[i] == 0)[0]
+        if len(clean) == 0:
+            continue
+        cen = central_psf_stamps(model, data, i, clean).reshape(len(clean), cols_npix)
+        cg = np.clip(cen, 0, None)
+        cg = cg / (cg.sum(axis=1, keepdims=True) + 1e-12)
+        w = (val[i, clean] > 0) / np.clip(var[i, clean], 1e-6, None)
+        datas.append(cut[i, clean])
+        weights.append(w)
+        centrals.append(cg)
+        idx.extend((i, int(j)) for j in clean)
+    if not datas:
+        return None
+    return np.concatenate(datas), np.concatenate(weights), np.concatenate(centrals), idx
+
+
+def clean_file_kimpute(model, data, cols, prior, n_keep, n_sweeps, rng, device):
+    """K-imputation cutouts for a WHOLE file: batch every clean star into one run_batch_gpu call
+    (B ~ thousands) -> (E, S, K, PATCH, PATCH) imputation tensor (non-clean = repeated original)."""
+    cut = data["cutouts"].numpy()  # (E, S, PATCH, PATCH)
+    imp = np.repeat(cut[:, :, None], n_keep, axis=2)
+    gathered = _gather_clean_stars(model, data, PATCH * PATCH)
+    if gathered is None:
+        return imp, 0
+    datas, weights, centrals, idx = gathered
+    samples, _, _ = run_batch_gpu(
+        datas, weights, centrals, cols, prior, n_sweeps, rng, n_keep=n_keep, device=device
+    )
+    cleaned = datas[:, None, :] - samples  # (B, K, npix)
+    for n, (i, j) in enumerate(idx):
+        imp[i, j] = cleaned[n].reshape(n_keep, PATCH, PATCH)
+    return imp, len(idx)
 
 
 def write_kimpute(
-    checkpoint, data_dir, out_dir, prior, n_keep, n_sweeps, limit, offset, max_stars=10**9
+    checkpoint, data_dir, out_dir, prior, n_keep, n_sweeps, limit, offset, device="cuda"
 ):
     """Write a K-imputation cleaned dataset (cutout_imp field) for the MCEM M-step."""
     model = load_model(checkpoint)
@@ -68,31 +91,19 @@ def write_kimpute(
     for path in files:
         data = load_exposure_file(path)
         cols = build_columns(model, data)  # Sigma_psf design built ONCE per file (field-constant)
-        cut = data["cutouts"].numpy()  # (E, S, H, W)
-        n_exp = cut.shape[0]
-        imp = np.repeat(cut[:, :, None], n_keep, axis=2)  # default: non-clean = repeated original
-        n_clean = 0
-        for i in range(n_exp):
-            clean, cleaned = clean_exposure_kimpute(
-                model, data, i, cols, prior, n_keep, n_sweeps, rng, max_stars=max_stars
-            )
-            for n, j in enumerate(clean):
-                imp[i, j] = cleaned[n].reshape(n_keep, PATCH, PATCH)
-            n_clean += len(clean)
+        imp, n_clean = clean_file_kimpute(model, data, cols, prior, n_keep, n_sweeps, rng, device)
         data["cutout_imp"] = torch.from_numpy(imp).float()
         torch.save(data, Path(out_dir) / Path(path).name)
         print(f"{Path(path).name}: {n_clean} clean stars x {n_keep} imputations -> cutout_imp")
 
 
-def _smoke(checkpoint, data_dir, n_keep, n_sweeps):
+def _smoke(checkpoint, data_dir, n_keep, n_sweeps, device):
     rng = np.random.default_rng(0)
     model = load_model(checkpoint)
     data = load_exposure_file(sorted(glob.glob(f"{data_dir}/*.pt"))[0])
     prior = {"lam": 1.0, "flux_lo": 100.0, "flux_hi": 2000.0, "alpha": 1.5}
     cols = build_columns(model, data)
-    clean, imp = clean_exposure_kimpute(
-        model, data, 0, cols, prior, n_keep, n_sweeps, rng, max_stars=4
-    )
+    imp, n_clean = clean_file_kimpute(model, data, cols, prior, n_keep, n_sweeps, rng, device)
 
     def ee2(v):
         s = np.clip(v, 0, None).reshape(PATCH, PATCH)
@@ -100,15 +111,20 @@ def _smoke(checkpoint, data_dir, n_keep, n_sweeps):
         yy, xx = np.mgrid[0:PATCH, 0:PATCH]
         return s[np.hypot(xx - c, yy - c) <= 2].sum() / (s.sum() + 1e-12)
 
+    st = data["star_type"][0].numpy()
+    clean = np.nonzero(st == 0)[0][:4]
     cut = data["cutouts"][0].numpy()
-    for n, j in enumerate(clean):
+    for j in clean:
         obs = ee2(cut[j].ravel())
-        ees = [ee2(imp[n, k]) for k in range(n_keep)]
+        ees = [ee2(imp[0, j, k].ravel()) for k in range(n_keep)]
         print(
             f"star {j}: obs EE@r2 {obs:.4f} -> {n_keep} imputations EE@r2 "
             f"mean {np.mean(ees):.4f} spread {np.std(ees):.4f}"
         )
-    print(f"shape {imp.shape} (n_clean, K, n_pix); imputations vary (spread>0) = the posterior")
+    print(
+        f"file: {n_clean} clean stars cleaned; imp shape {imp.shape} (E,S,K,P,P); "
+        f"spread>0 = the posterior"
+    )
 
 
 def main():
@@ -123,7 +139,7 @@ def main():
     parser.add_argument("--offset", type=int, default=0)
     parser.add_argument("--prior-lam", type=float, default=1.0)
     parser.add_argument("--prior-alpha", type=float, default=1.5)
-    parser.add_argument("--max-stars", type=int, default=10**9)
+    parser.add_argument("--device", default="cuda")
     args = parser.parse_args()
     prior = {"lam": args.prior_lam, "flux_lo": 100.0, "flux_hi": 2000.0, "alpha": args.prior_alpha}
     if args.mode == "write":
@@ -136,10 +152,10 @@ def main():
             args.n_sweeps,
             args.limit,
             args.offset,
-            args.max_stars,
+            args.device,
         )
     else:
-        _smoke(args.checkpoint, args.data_dir, args.n_keep, args.n_sweeps)
+        _smoke(args.checkpoint, args.data_dir, args.n_keep, args.n_sweeps, args.device)
 
 
 if __name__ == "__main__":
