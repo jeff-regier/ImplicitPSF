@@ -250,6 +250,7 @@ def parse_args():
     )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--queue-size", type=int, default=64)
+    parser.add_argument("--init-checkpoint", default=None, help="EM warm-start: load these weights")
     return parser.parse_args()
 
 
@@ -316,6 +317,10 @@ def main():
     )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
+    if args.init_checkpoint:  # EM warm-start: load the previous iteration's weights
+        state = torch.load(args.init_checkpoint, map_location=device, weights_only=False)
+        model.load_state_dict(state["model_state_dict"])
+        print(f"warm-started from {args.init_checkpoint}")
     print(f"device: {device}")
 
     optimizer = torch.optim.Adam(
