@@ -68,8 +68,8 @@ def main():
     parser.add_argument("--offset", type=int, default=0, help="skip the first OFFSET files")
     parser.add_argument("--max-stars", type=int, default=10**9, help="clean stars per exposure cap")
     parser.add_argument("--grid-n", type=int, default=PATCH, help="detection grid (16 = 4x faster)")
-    parser.add_argument("--prior-lam", type=float, default=PRIOR["lam"], help="contam rate (lower=less)")
-    parser.add_argument("--prior-flux-hi", type=float, default=PRIOR["flux_hi"], help="flux ceiling")
+    parser.add_argument("--prior-lam", type=float, default=PRIOR["lam"])
+    parser.add_argument("--prior-flux-hi", type=float, default=PRIOR["flux_hi"])
     args = parser.parse_args()
 
     prior = {**PRIOR, "lam": args.prior_lam, "flux_hi": args.prior_flux_hi}
