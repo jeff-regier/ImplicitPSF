@@ -21,8 +21,6 @@ import re
 import subprocess
 from pathlib import Path
 
-CLEAN_GPUS = ["1", "2", "3"]  # parallel E-step workers, one file-range each
-TRAIN_GPU = "1"
 N_FILES = 150
 
 
@@ -43,42 +41,37 @@ def repoint_manifest(base_manifest, data_dir, out_path):
     return out_path
 
 
-def e_step(central, base_data_dir, clean_dir, n_keep, n_sweeps):
-    """Clean every file with the current central, in parallel file-ranges across CLEAN_GPUS."""
+def e_step(central, base_data_dir, clean_dir, n_keep, n_sweeps, gpu):
+    """Clean every file with the current central on this chain's single GPU (fast GPU path)."""
     Path(clean_dir).mkdir(parents=True, exist_ok=True)
-    per = -(-N_FILES // len(CLEAN_GPUS))  # ceil
-    procs = []
-    for i, gpu in enumerate(CLEAN_GPUS):
-        cmd = [
-            "python",
-            "-m",
-            "implicitpsf.mcem_clean",
-            "--mode",
-            "write",
-            "--offset",
-            str(i * per),
-            "--limit",
-            str(per),
-            "--n-keep",
-            str(n_keep),
-            "--n-sweeps",
-            str(n_sweeps),
-            "--data-dir",
-            base_data_dir,
-            "--checkpoint",
-            central,
-            "--out-dir",
-            clean_dir,
-            "--device",
-            "cuda",
-        ]
-        procs.append(subprocess.Popen(cmd, env=_env(gpu)))
-    for p in procs:
-        if p.wait() != 0:
-            raise RuntimeError("e_step cleaner failed")
+    cmd = [
+        "python",
+        "-m",
+        "implicitpsf.mcem_clean",
+        "--mode",
+        "write",
+        "--offset",
+        "0",
+        "--limit",
+        str(N_FILES),
+        "--n-keep",
+        str(n_keep),
+        "--n-sweeps",
+        str(n_sweeps),
+        "--data-dir",
+        base_data_dir,
+        "--checkpoint",
+        central,
+        "--out-dir",
+        clean_dir,
+        "--device",
+        "cuda",
+    ]
+    if subprocess.run(cmd, env=_env(gpu), check=False).returncode != 0:
+        raise RuntimeError("e_step cleaner failed")
 
 
-def m_step(init_ckpt, data_dir, manifest, out_dir, epochs, seed):
+def m_step(init_ckpt, data_dir, manifest, out_dir, epochs, seed, gpu):
     """Warm-start from init_ckpt and partially fit the new imputations (the M-step)."""
     cmd = [
         "python",
@@ -115,11 +108,11 @@ def m_step(init_ckpt, data_dir, manifest, out_dir, epochs, seed):
         "--out-dir",
         out_dir,
     ]
-    subprocess.run(cmd, env=_env(TRAIN_GPU), check=True)
+    subprocess.run(cmd, env=_env(gpu), check=True)
     return str(Path(out_dir) / "best.pt")
 
 
-def evaluate(ckpt, manifest, data_dir, max_exposures):
+def evaluate(ckpt, manifest, data_dir, max_exposures, gpu):
     """delta-EE@r2 of the model PSF vs sim truth at star-free positions."""
     cmd = [
         "python",
@@ -136,7 +129,7 @@ def evaluate(ckpt, manifest, data_dir, max_exposures):
         "--max-exposures",
         str(max_exposures),
     ]
-    out = subprocess.run(cmd, env=_env(TRAIN_GPU), check=True, capture_output=True, text=True)
+    out = subprocess.run(cmd, env=_env(gpu), check=True, capture_output=True, text=True)
     match = re.search(r"dEE@r2 mean.*=\s*([+-][\d.]+)", out.stdout)
     if not match:
         raise RuntimeError(f"could not parse delta-EE from:\n{out.stdout[-500:]}")
@@ -145,11 +138,13 @@ def evaluate(ckpt, manifest, data_dir, max_exposures):
 
 def one_iteration(it, central, args, clean_dir, log_path):
     """Run E-step + M-step + diagnostic for one EM iteration; return the new central checkpoint."""
-    e_step(central, args.base_data_dir, clean_dir, args.n_keep, args.n_sweeps)
-    manifest = repoint_manifest(args.base_manifest, clean_dir, f"{args.work_dir}/manifest_it.json")
+    e_step(central, args.base_data_dir, clean_dir, args.n_keep, args.n_sweeps, args.gpu)
+    manifest = repoint_manifest(args.base_manifest, clean_dir, f"{args.work_dir}/manifest.json")
     out_dir = f"{args.work_dir}/model_it{it}"
-    new_central = m_step(central, clean_dir, manifest, out_dir, args.epochs, args.seed)
-    dee = evaluate(new_central, args.base_manifest, args.base_data_dir, args.max_exposures)
+    new_central = m_step(central, clean_dir, manifest, out_dir, args.epochs, args.seed, args.gpu)
+    dee = evaluate(
+        new_central, args.base_manifest, args.base_data_dir, args.max_exposures, args.gpu
+    )
     with open(log_path, "a") as f:
         f.write(f"{it},{new_central},{dee:+.5f}\n")
     print(f"[EM it{it}] delta-EE = {dee:+.5f}  (central -> {new_central})", flush=True)
@@ -168,6 +163,7 @@ def main():
     parser.add_argument("--n-sweeps", type=int, default=40)
     parser.add_argument("--max-exposures", type=int, default=30)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--gpu", default="1", help="single GPU for this chain (clean+train+eval)")
     args = parser.parse_args()
     Path(args.work_dir).mkdir(parents=True, exist_ok=True)
     clean_dir = f"{args.work_dir}/clean"  # reused every iteration (overwritten) -> bounded disk
