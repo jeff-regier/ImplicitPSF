@@ -118,13 +118,16 @@ def inject_anchor_stamp(rng, kernel, x, y, gal, noise_sigma):
     return image.array + rng.normal(0, noise_sigma, image.array.shape)
 
 
-def implicit_kernels(model, data, index, fit_mask, x, y):
-    """Implicit-model PSF at the anchor positions, conditioned only on fit stars."""
+def implicit_kernels(model, data, index, fit_mask, x, y, query_flux=None):
+    """Implicit-model PSF at the anchor positions, conditioned only on fit stars. query_flux=None
+    keeps render_at's default (median context-star flux); a high value renders the CLEAN-limit PSF
+    (the model's flux axis is a cleanliness axis: bright=less contaminated=sharper)."""
     batch = dict(make_batch(data, [index]))
     batch["flux"] = batch["flux"] * torch.from_numpy(fit_mask).unsqueeze(0)
     queries = torch.from_numpy(np.column_stack([np.round(x), np.round(y)]).astype(np.float32))
     colors = torch.zeros(len(x))
-    return render_at(model, batch, queries, colors, oversample=OVERSAMPLE).numpy()
+    qf = None if query_flux is None else torch.full((len(x),), float(query_flux))
+    return render_at(model, batch, queries, colors, query_fluxes=qf, oversample=OVERSAMPLE).numpy()
 
 
 def implicit_interp_kernels(model, data, index, fit_mask, x, y, grid):
@@ -181,7 +184,8 @@ def truth_kernels(anchor_profiles, grid):
     return np.stack([lattice_kernel(p, grid) for p in anchor_profiles])
 
 
-def evaluate_exposure(model, data, index, reserved_ids, workdir, free_n, with_psfex):
+def evaluate_exposure(model, data, index, reserved_ids, workdir, free_n, with_psfex,
+                      query_flux=None):
     exposure_id = data["exposure_id"][index]
     anchors = select_anchors(data, index, reserved_ids)
     if len(anchors) == 0:
@@ -225,7 +229,7 @@ def evaluate_exposure(model, data, index, reserved_ids, workdir, free_n, with_ps
 
     arms = {
         "truth": truth_kernels(profiles, grid),
-        "implicit": implicit_kernels(model, data, index, fit_mask, ax, ay),
+        "implicit": implicit_kernels(model, data, index, fit_mask, ax, ay, query_flux),
         "implicit_interp": implicit_interp_kernels(model, data, index, fit_mask, ax, ay, grid),
         "piff": piff_kernels(piff_psf, ax, ay, grid),
     }
@@ -313,7 +317,8 @@ def eval_file_group(args, file_name, exposures):
         with tempfile.TemporaryDirectory() as workdir:
             try:
                 frame = evaluate_exposure(
-                    model, data, index, reserved_ids, workdir, args.free_n, args.with_psfex
+                    model, data, index, reserved_ids, workdir, args.free_n, args.with_psfex,
+                    args.query_flux
                 )
                 if frame is not None:
                     frames.append(frame)
@@ -336,6 +341,13 @@ def main():
     )
     parser.add_argument("--split", default="test", choices=["test", "val"])
     parser.add_argument("--band", default=None)
+    parser.add_argument(
+        "--query-flux",
+        type=float,
+        default=None,
+        help="render the implicit PSF at this fixed flux (clean-limit test); default = median "
+        "context-star flux. High flux renders the model's least-contaminated PSF.",
+    )
     parser.add_argument("--max-exposures", type=int, default=None)
     parser.add_argument("--num-workers", type=int, default=8)
     parser.add_argument("--free-n", action="store_true")
