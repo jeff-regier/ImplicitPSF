@@ -451,7 +451,7 @@ with the true PSF (the anchor's own image) sets the protocol floor: near-zero el
 bias and a residual $-1.2\%$ size bias---not a true zero, but the discretization floor of
 the recovery forward model---against which the predicted PSFs are scored.
 On 32 $r$-band test exposures (170 anchors; Table~\ref{tab:galrec}), all three methods recover galaxy
-\emph{ellipticity} with low bias ($|\Delta e_1|\lesssim0.01$): the pixel-convolved
+\emph{ellipticity} with low bias ($|\Delta e_1|\lesssim0.013$): the pixel-convolved
 effective PSF carries the PSF ellipticity faithfully into the forward model, so no method
 imprints a coherent shape error on the recovered galaxies, the weak-lensing-critical
 property, which our model satisfies on par with the per-exposure baselines. The methods
@@ -474,7 +474,7 @@ of our model; recovered ellipticity, the consequential quantity for shear, is un
 \centering
 \includegraphics[width=0.75\textwidth]{figures/fig_galrec.pdf}
 \caption{Galaxy recovery on real data (star-anchored injection), median $\pm$ bootstrap 95\%
-CI per PSF. Left: recovered ellipticity is unbiased ($|\Delta e_1|\lesssim0.004$) for all
+CI per PSF. Left: recovered ellipticity is low-bias ($|\Delta e_1|\lesssim0.013$) for all
 three methods. Right: the methods separate on recovered \emph{size}---our model runs
 ${\sim}8\%$ small (the PSF-core under-concentration), while \textsc{PIFF} and the
 true PSF are near zero (\S\ref{sec:galrec}).\label{fig:galrec}}
@@ -489,9 +489,9 @@ they separate on recovered size.\label{tab:galrec}}
 \tablehead{\colhead{PSF} & \colhead{Size bias} & \colhead{$\Delta e_1$} &
 \colhead{$\Delta e_2$}}
 \startdata
-True PSF            & $-1.2\%$ & $-0.000$ & $-0.011$ \\
-\textbf{Neural PSF (ours)}  & $-7.6\%$ & $-0.001$ & $-0.008$ \\
-\textsc{PIFF}       & $+1.1\%$ & $-0.004$ & $-0.012$ \\
+True PSF            & $-1.2\%$ & $-0.009$ & $-0.000$ \\
+\textbf{Neural PSF (ours)}  & $-7.6\%$ & $-0.005$ & $-0.000$ \\
+\textsc{PIFF}       & $+1.1\%$ & $-0.013$ & $-0.003$ \\
 \enddata
 \end{deluxetable}
 
@@ -585,8 +585,8 @@ test-time fitting, robustness in star-sparse exposures, conditioning on color
 (chromatic PSF) and flux (brighter--fatter), and a directly forward-modelable output: we
 predict the pixel-convolved effective PSF, the identifiable quantity the data constrain
 and the exact kernel a galaxy model is convolved with (\S\ref{sec:intro}), so the PSF
-feeds a shear pipeline with no intervening pixel-deconvolution assumption. Caveats: (i)~unlike per-exposure fitters, the
-our approach requires many exposures to learn the field (in simulation, ellipticity
+feeds a shear pipeline with no intervening pixel-deconvolution assumption. Caveats: (i)~unlike per-exposure fitters, our
+approach requires many exposures to learn the field (in simulation, ellipticity
 recovery is unstable below a few thousand exposures; real DES is well above this);
 (ii)~the simulation's idealized PSF (Moffat, low-order polynomial field) favors the
 per-exposure baselines, so absolute-accuracy comparisons rest on real data; and
