@@ -55,7 +55,12 @@ def model_psf(model, data, index, idx, flux_override):
     y = data["y_pixel"][index].numpy()[idx]
     q = torch.tensor(np.column_stack([np.round(x), np.round(y)]), dtype=torch.float32)
     colors = data["color"][index][idx].float()
-    qf = None if flux_override is None else torch.full((len(idx),), float(flux_override))
+    if flux_override is None:  # match each star's OWN flux (BF + cleanliness matched)
+        qf = data["flux"][index][idx].float()
+    elif flux_override == "median":  # what galaxy_recovery actually uses (render_at default)
+        qf = None
+    else:
+        qf = torch.full((len(idx),), float(flux_override))
     return render_at(model, batch, q, colors, query_fluxes=qf, oversample=1).numpy()
 
 
@@ -90,14 +95,14 @@ def main():
     args = parser.parse_args()
 
     manifest = load_manifest(args.manifest)
-    model = load_model(args.checkpoint)
+    model = load_model(args.checkpoint, device="cuda")  # else renders on CPU (slow)
     files = sorted(glob.glob(f"{args.data_dir}/*.pt"))
     want = {e: i for e, i in manifest["exposures"].items() if i["split"] == args.split}
     by_file = {}
     for eid, info in want.items():
         by_file.setdefault(info["file"], []).append((info["index"], eid))
 
-    fluxes = [None] if not args.flux_sweep else [2e3, 1e4, 5e4, 2e5, 1e6]
+    fluxes = [None, "median"] if not args.flux_sweep else [None, "median", 1e4, 1e5, 1e6]
     n_exp = 0
     per_flux = {f: ([], []) for f in fluxes}
     for path in files:
@@ -119,7 +124,7 @@ def main():
     print(f"{'render flux':>14} {'median dT%':>11} {'mean dT% +/- sem':>20}  n")
     for f in fluxes:
         dt = np.concatenate(per_flux[f][0])
-        label = "own (matched)" if f is None else f"{f:.0f}"
+        label = {None: "own (matched)", "median": "median (galrec)"}.get(f, f"{f}")
         sem = dt.std() / np.sqrt(len(dt))
         print(f"{label:>14} {100*np.median(dt):>+10.2f}% {100*dt.mean():>+9.2f} +/- {100*sem:>4.2f}"
               f"   {len(dt)}")
