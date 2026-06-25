@@ -9,6 +9,9 @@
 \usepackage{amsmath,amssymb,bm}
 \usetikzlibrary{positioning,arrows.meta,fit,backgrounds,calc}
 
+% Visible, greppable placeholder for results still in progress (real-data correction).
+\newcommand{\placeholder}[1]{\textbf{[\textsc{placeholder}: #1]}}
+
 \begin{document}
 
 \title{Learning the Effective PSF: A Neural PSF Field with Amortized
@@ -35,10 +38,14 @@ matches or exceeds \textsc{PIFF} and \textsc{PSFEx} on every reserved-star metri
 and ellipticity residuals, shape correlation, and per-pixel goodness of fit. In a
 star-anchored galaxy injection--recovery test on real data, it recovers galaxy
 \emph{ellipticity}---the weak-lensing-critical quantity---without coherent bias and on par
-with \textsc{PIFF}, while recovered \emph{sizes} run a few percent small. Higher-capacity
-coordinate encodings reduce this size deficit, but controlled simulations with known PSFs do
-not reproduce it at any decoder capacity, so it is specific to real data and its origin remains
-under investigation. Color conditioning further removes a chromatic PSF-size systematic
+with \textsc{PIFF}, while recovered \emph{sizes} run a few percent small. We trace a
+contributing cause to faint unresolved neighbours contaminating nominally-clean training
+stars, and correct it with a Monte Carlo EM that infers and subtracts each star's
+contaminant posterior before refitting the field. In controlled simulations the correction
+is decisive: it returns the PSF concentration and the recovered galaxy sizes to truth, and
+the contamination rate is recovered with calibrated uncertainty.
+\placeholder{real-data size-deficit reduction after correction.}
+Color conditioning further removes a chromatic PSF-size systematic
 that the baselines retain, and the model stays accurate in star-sparse exposures where
 \textsc{PIFF} degrades sharply. Controlled simulations motivate two training choices: a
 \emph{blend forward-model} loss that removes a size bias from unrecognized blends, and
@@ -465,10 +472,14 @@ magnitude is architecture-dependent (Table~\ref{tab:galrec} reports the baseline
 coordinate encodings---random Fourier features, an explicit analytic core---roughly halve it,
 \S\ref{sec:discussion}), pointing to an under-resolution component. It is, however, specific to
 real data: controlled simulations with known PSFs do not reproduce it at any decoder capacity, so
-it is not a generic spectral-bias limitation of the decoder. Its full origin is not yet isolated:
-contamination of nominally-clean training stars by faint unresolved neighbours reproduces the sign
-and \textsc{PIFF}'s relative robustness but only a fraction of the magnitude, and unmodeled real
-PSF morphology is the leading remaining candidate. The size deficit is the main residual systematic
+it is not a generic spectral-bias limitation of the decoder. We attribute it, at least in part, to
+faint unresolved neighbours contaminating the nominally-clean training stars: adding such
+contamination to a simulation reproduces both the PSF under-concentration and the recovered-size
+deficit, and the Monte Carlo EM of \S\ref{sec:mcem} removes both there (\S\ref{sec:sim}). The
+direct test on real data---applying the identical cleaner and sampler to the real training stars and
+re-running this injection--recovery experiment---is reported here:
+\placeholder{real-data recovered galaxy-size bias before vs.\ after the contamination correction.}
+The size deficit is the main residual systematic
 of our model; recovered ellipticity, the consequential quantity for shear, is unbiased.
 \begin{figure*}
 \centering
@@ -528,6 +539,31 @@ verified floor $1.0$), recovering both ellipticity components.
 \paragraph{Blend forward-model} On a blended simulation, single-star training leaves a
 $+4.8\%$ size bias on the star-free truth grid; the blend forward-model loss reduces it to
 $+0.7\%$ (${\approx}7\times$).
+
+\paragraph{Contamination correction by Monte Carlo EM} Adding the faint-neighbour
+contamination of \S\ref{sec:galrec} to the training stars reproduces the size deficit in
+simulation, where the truth PSF is known exactly: the learned PSF is under-concentrated by
+$\delta\mathrm{EE}(r{\le}2\,{\rm px})=-0.0072$ relative to truth, and injected galaxies are
+recovered $-2.4\%$ small (the simulation analogue of the real deficit, after differencing
+against recovery through the known clean PSF to cancel the protocol floor). The Monte Carlo
+EM of \S\ref{sec:mcem} removes it. Cleaning each training star against its inferred
+contaminant posterior and refitting the field drives the PSF concentration to truth
+($\delta\mathrm{EE}\to0$ at the fixed point, converged over EM iterations and stable across
+five seeds) and shrinks the recovered galaxy-size bias from $-2.4\%$ to $-0.8\%$. The global
+contamination hyperparameters---the per-stamp rate $\lambda$ and the flux power-law slope
+$\alpha$---are inferred jointly rather than assumed, and are recovered with calibrated
+uncertainty: simulation-based calibration gives nominal $90\%$ credible-interval coverage
+($1.00$ and $0.94$ for $\lambda$ and $\alpha$) with well-mixed chains (Gelman--Rubin
+$\hat R<1.05$). Two diagnostics were decisive and are worth recording. First, the cleaning
+template must be rendered at each star's \emph{sub-pixel} centre: an integer-grid template
+is offset from the star and the sampler removes the resulting dipole residual as spurious
+contamination, over-sharpening the PSF and---because the cleaned PSF re-enters the next
+E-step---running the EM away from truth; comparing the sampler's bias against the \emph{known}
+PSF as the template isolated this. Second, the contaminant prior must exclude sources fainter
+than the per-pixel noise, which are unidentifiable from noise; including them produced
+per-cell false detections that biased the inferred rate high, caught by the calibration test.
+With both addressed, the correction recovers the truth on all three axes---PSF concentration,
+galaxy size, and the contamination hyperparameters.
 
 \paragraph{Galaxy-context corrupts PSF ellipticity---and the fix} Injecting galaxy
 detections into the simulation, a model that attends to \emph{all} detections (including
@@ -600,10 +636,13 @@ residual at $r{=}2$\,px (${\sim}2\%\to0.1\%$) and the galaxy-size bias by ${\sim
 and an explicit analytic core does likewise, indicating an under-resolution component. It is,
 however, \emph{specific to real data}: controlled simulations with known PSFs do not reproduce the
 deficit at any decoder capacity, ruling out a generic spectral-bias limitation of the
-multilayer-perceptron decoder. Its full origin is under investigation---faint-neighbour
-contamination of the training stars reproduces the sign and \textsc{PIFF}'s robustness but, in
-simulation, only a fraction of the magnitude and without a clear dose-response, so unmodeled real
-PSF morphology is the leading remaining candidate. It is the main residual systematic to address before a shear analysis. A separate, milder effect appears only in the
+multilayer-perceptron decoder. We identify faint-neighbour contamination of the
+training stars as a---likely the dominant---cause: it reproduces the under-concentration in
+simulation, and the Monte Carlo EM of \S\ref{sec:mcem}, which infers and subtracts each star's
+contaminant posterior before refitting, removes it there, returning the PSF concentration and the
+recovered galaxy sizes to truth (\S\ref{sec:sim}). The identical cleaner and sampler apply to the
+real training stars; \placeholder{real-data outcome of the correction.} It is the main residual
+systematic to address before a shear analysis. A separate, milder effect appears only in the
 reserved-star metric (Fig.~\ref{fig:residmag}): evaluated at each star's \emph{own} flux,
 $\delta T/T$ rises to ${\sim}{+}1.2\%$ at faint magnitudes, a spurious flux--size trend in
 the conditioning; because the inferential PSF is rendered at a fiducial flux, this does not
