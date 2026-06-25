@@ -41,31 +41,15 @@ def repoint_manifest(base_manifest, data_dir, out_path):
     return out_path
 
 
-def e_step(central, base_data_dir, clean_dir, n_keep, n_sweeps, gpu):
+def e_step(central, base_data_dir, clean_dir, n_keep, n_sweeps, gpu, prior_lam):
     """Clean every file with the current central on this chain's single GPU (fast GPU path)."""
     Path(clean_dir).mkdir(parents=True, exist_ok=True)
     cmd = [
-        "python",
-        "-m",
-        "implicitpsf.mcem_clean",
-        "--mode",
-        "write",
-        "--offset",
-        "0",
-        "--limit",
-        str(N_FILES),
-        "--n-keep",
-        str(n_keep),
-        "--n-sweeps",
-        str(n_sweeps),
-        "--data-dir",
-        base_data_dir,
-        "--checkpoint",
-        central,
-        "--out-dir",
-        clean_dir,
-        "--device",
-        "cuda",
+        "python", "-m", "implicitpsf.mcem_clean", "--mode", "write",
+        "--offset", "0", "--limit", str(N_FILES),
+        "--n-keep", str(n_keep), "--n-sweeps", str(n_sweeps),
+        "--data-dir", base_data_dir, "--checkpoint", central,
+        "--out-dir", clean_dir, "--device", "cuda", "--prior-lam", str(prior_lam),
     ]
     if subprocess.run(cmd, env=_env(gpu), check=False).returncode != 0:
         raise RuntimeError("e_step cleaner failed")
@@ -138,7 +122,8 @@ def evaluate(ckpt, manifest, data_dir, max_exposures, gpu):
 
 def one_iteration(it, central, args, clean_dir, log_path):
     """Run E-step + M-step + diagnostic for one EM iteration; return the new central checkpoint."""
-    e_step(central, args.base_data_dir, clean_dir, args.n_keep, args.n_sweeps, args.gpu)
+    e_step(central, args.base_data_dir, clean_dir, args.n_keep, args.n_sweeps, args.gpu,
+           args.prior_lam)
     manifest = repoint_manifest(args.base_manifest, clean_dir, f"{args.work_dir}/manifest.json")
     out_dir = f"{args.work_dir}/model_it{it}"
     new_central = m_step(central, clean_dir, manifest, out_dir, args.epochs, args.seed, args.gpu)
@@ -164,6 +149,7 @@ def main():
     parser.add_argument("--max-exposures", type=int, default=30)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--gpu", default="1", help="single GPU for this chain (clean+train+eval)")
+    parser.add_argument("--prior-lam", type=float, default=1.0, help="cleaning contamination rate")
     args = parser.parse_args()
     Path(args.work_dir).mkdir(parents=True, exist_ok=True)
     clean_dir = f"{args.work_dir}/clean"  # reused every iteration (overwritten) -> bounded disk
