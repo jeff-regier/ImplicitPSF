@@ -139,9 +139,16 @@ def main():
     parser.add_argument("--offset", type=int, default=0)
     parser.add_argument("--prior-lam", type=float, default=1.0)
     parser.add_argument("--prior-alpha", type=float, default=1.5)
+    parser.add_argument("--prior-flux-lo", type=float, default=100.0)
+    parser.add_argument("--prior-flux-hi", type=float, default=2000.0)
     parser.add_argument("--device", default="cuda")
     args = parser.parse_args()
-    prior = {"lam": args.prior_lam, "flux_lo": 100.0, "flux_hi": 2000.0, "alpha": args.prior_alpha}
+    prior = {
+        "lam": args.prior_lam,
+        "flux_lo": args.prior_flux_lo,
+        "flux_hi": args.prior_flux_hi,
+        "alpha": args.prior_alpha,
+    }
     if args.mode == "write":
         write_kimpute(
             args.checkpoint,
