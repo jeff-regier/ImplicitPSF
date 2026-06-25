@@ -75,12 +75,16 @@ def hier_gibbs(datas, weight, central_g, columns, lo, hi, n_sweeps, rng, burn=0.
     """Hierarchical Gibbs over many stars with lambda COLLAPSED out of the detection update: cells
     share a running total count via the Gamma-Poisson predictive rate, so the chain is not trapped
     by a stale sampled lambda (the un-collapsed version had R-hat 1.23 / ESS 13). The reported
-    lambda chain is drawn from lambda | z each sweep. Returns the post-burn (lambda,alpha) chain."""
+    lambda chain is drawn from lambda | z each sweep. `weight` and `central_g` may be shared
+    (npix,) -- the homogeneous SBC case -- or PER-STAR (n_stars, npix) for real heterogeneous stars
+    (different inverse-variance and PSF per star). Returns the post-burn (lambda,alpha) chain."""
     n_cells, n_cov = columns.shape[0], columns.shape[1]
-    b = (weight * columns**2).sum(axis=2)
-    cg_norm = float((weight * central_g**2).sum())
+    n_stars, npix = len(datas), columns.shape[2]
+    weight = np.broadcast_to(np.asarray(weight, dtype=float), (n_stars, npix))
+    central_g = np.broadcast_to(np.asarray(central_g, dtype=float), (n_stars, npix))
+    b = np.einsum("sp,ckp->sck", weight, columns**2)  # (n_stars, n_cells, n_cov)
+    cg_norm = (weight * central_g**2).sum(axis=1)  # (n_stars,)
     log_ncov = -np.log(n_cov)
-    n_stars = len(datas)
     detect = np.zeros((n_stars, n_cells), dtype=bool)
     cov_idx = np.zeros((n_stars, n_cells), dtype=int)
     flux = np.zeros((n_stars, n_cells))
@@ -94,15 +98,16 @@ def hier_gibbs(datas, weight, central_g, columns, lo, hi, n_sweeps, rng, burn=0.
         pooled_flux = []
         for i, data in enumerate(datas):
             di, ki, fi, cm = detect[i], cov_idx[i], flux[i], contam[i]
-            cf = (weight * (data - cm) * central_g).sum() / cg_norm
-            resid = data - cf * central_g - cm
+            wi, cgi = weight[i], central_g[i]
+            cf = (wi * (data - cm) * cgi).sum() / cg_norm[i]
+            resid = data - cf * cgi - cm
             for c in range(n_cells):
                 cur = fi[c] * columns[c, ki[c]] if di[c] else 0.0
                 log_odds = _collapsed_log_odds(total, di[c], n_stars, n_cells)
-                on, k, f, contrib = _cell(resid + cur, weight, columns[c], b[c], grid, log_w,
+                on, k, f, contrib = _cell(resid + cur, wi, columns[c], b[i, c], grid, log_w,
                                           log_odds, log_ncov, rng)
                 cm += contrib - cur
-                resid = data - cf * central_g - cm
+                resid = data - cf * cgi - cm
                 total += int(on) - int(di[c])
                 di[c], ki[c], fi[c] = on, k, f
             pooled_flux.extend(fi[di].tolist())
