@@ -44,6 +44,22 @@ def set_psf_model(name):
     _PSF_MODEL["name"] = name
 
 
+def set_bright_tail(on):
+    """Enable the real-matched bright flux tail; call before generation (fork workers inherit)."""
+    _BRIGHT_TAIL["on"] = bool(on)
+
+
+def sample_star_fluxes(rng, n):
+    """Log-uniform bulk on FLUX_RANGE; with --bright-tail, a BRIGHT_TAIL_FRAC fraction is redrawn
+    log-uniform up to BRIGHT_FLUX_MAX so the sim spans real's full dynamic range."""
+    lo, hi = FLUX_RANGE
+    flux = np.exp(rng.uniform(np.log(lo), np.log(hi), n))
+    if _BRIGHT_TAIL["on"]:
+        tail = rng.random(n) < BRIGHT_TAIL_FRAC
+        flux[tail] = np.exp(rng.uniform(np.log(hi), np.log(BRIGHT_FLUX_MAX), int(tail.sum())))
+    return flux
+
+
 def psf_profile(fwhm_pixels, flux=1.0):
     """Effective PSF at the given FWHM. 'moffat' is a soft-cored fitting function (too smooth to
     show the real core deficit); 'kolmogorov' is pure atmospheric turbulence (too peaked to fit);
@@ -85,6 +101,13 @@ def local_psf(field, x, y, color, flux=1.0):
 
 
 FLUX_RANGE = (2e3, 6e5)  # real clean-star flux p10-p90 ~7e3-5e5 (bright tail matters)
+# Real clean stars have a bright TAIL the log-uniform bulk misses: ~9% exceed 6e5, up to ~6.4e6
+# (10x the bulk ceiling). Opt-in --bright-tail extends the sim to this real dynamic range so the
+# encoder's high-dynamic-range handling (normalized intra-stamp core/wing up to ~700x) is exercised
+# in simulation, where truth exists, BEFORE/concurrent with real data. Default off = old sim.
+BRIGHT_TAIL_FRAC = 0.09
+BRIGHT_FLUX_MAX = 6.4e6
+_BRIGHT_TAIL = {"on": False}  # mutable holder (fork workers inherit it)
 FWHM_BASE_RANGE = (2.6, 5.4)  # pixels, per-exposure seeing
 FWHM_VARIATION = 0.15  # fractional field variation
 SHEAR_SCALE = 0.04
@@ -310,7 +333,7 @@ def simulate_exposure(
     margin = half + 2
     x = rng.uniform(margin, WIDTH - margin, n_stars)
     y = rng.uniform(margin, HEIGHT - margin, n_stars)
-    flux = np.exp(rng.uniform(np.log(FLUX_RANGE[0]), np.log(FLUX_RANGE[1]), n_stars))
+    flux = sample_star_fluxes(rng, n_stars)
     color = np.clip(rng.normal(COLOR_MEAN, COLOR_SCATTER, n_stars), -0.5, 3.0)
 
     image = galsim.Image(WIDTH, HEIGHT, scale=PIXEL_SCALE, dtype=np.float32)
@@ -536,8 +559,15 @@ def main():
         default=64,
         help="write FITS only for the first N test exposures (the rest are never screened)",
     )
+    parser.add_argument(
+        "--bright-tail",
+        action="store_true",
+        help="extend clean-star flux to real's bright tail (~9%% up to 6.4e6) to exercise the "
+        "high-dynamic-range regime in simulation (truth known) before/with real data",
+    )
     args = parser.parse_args()
     set_psf_model(args.psf_model)
+    set_bright_tail(args.bright_tail)  # before forking workers (they inherit the holder)
     fits_seeds = first_test_seeds(args.n_exposures, args.n_test_fits)
 
     Path(args.out_dir).mkdir(parents=True, exist_ok=True)
