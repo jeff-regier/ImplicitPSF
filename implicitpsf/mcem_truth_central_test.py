@@ -7,8 +7,8 @@ the truth; this checks the same on REAL sim stars. We render the TRUE PSF at eac
 position (same corner convention as the cutout), use it as the cleaning central, run the batched
 Gibbs, and compare stacked EE@r2 of {contaminated cutout, cleaned cutout, true PSF} at the centroid.
 
-  cleaned EE@r2 ~ truth => sampler UNBIASED given the true central => over-correction is EM DYNAMICS.
-  cleaned EE@r2 > truth => sampler over-cleans even given the true central => sampler/prior issue.
+  cleaned EE@r2 ~ truth => sampler UNBIASED given the central (with --model-central this caught the
+  sub-pixel-centering over-cleaning bug); cleaned > truth => over-cleans (sampler/prior/centering).
 """
 
 import argparse
@@ -79,7 +79,7 @@ def main():
     parser.add_argument("--prior-lam", type=float, default=1.0)
     parser.add_argument("--prior-alpha", type=float, default=1.5)
     parser.add_argument("--device", default="cuda")
-    parser.add_argument("--model-central", default=None, help="NN ckpt for the central (else truth)")
+    parser.add_argument("--model-central", default=None, help="NN ckpt for central (else truth)")
     args = parser.parse_args()
     set_psf_model(args.psf_model)
     prior = {"lam": args.prior_lam, "flux_lo": 100.0, "flux_hi": 2000.0, "alpha": args.prior_alpha}
@@ -103,7 +103,7 @@ def main():
     print(f"  EE@r2 truth        mean = {tru_ee.mean():.4f}")
     d = cln_ee - tru_ee
     print(f"  cleaned - truth mean +/- sem = {d.mean():+.4f} +/- {d.std() / np.sqrt(len(d)):.4f}")
-    print("  (>0 => over-cleans even given truth; ~0 => unbiased -> over-correction is EM dynamics)")
+    print("  (>0 => over-cleans given this central; ~0 => unbiased cleaning)")
 
 
 if __name__ == "__main__":
