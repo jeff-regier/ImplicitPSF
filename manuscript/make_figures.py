@@ -24,7 +24,7 @@ plt.rcParams.update(
 )
 
 FIGDIR = "manuscript/figures"
-SIM_PT = sorted(glob.glob("/data/scratch/regier/sim_realdens6k_stars/*.pt"))[0]
+SIM_PT = (sorted(glob.glob("/data/scratch/regier/sim_realdens6k_stars/*.pt")) or [None])[0]
 HEADLINE = "results/real_test_v6_blend_allmethods.parquet"
 GALREC = "results/galaxy_recovery_real_v6_blend.parquet"
 METHOD_LABEL = {"implicit": "Neural PSF", "piff": "PIFF", "psfex": "PSFEx"}
@@ -210,31 +210,33 @@ def _median_ci(x, n_boot=2000):
 
 
 def fig_galrec():
-    """Galaxy recovery per arm (star-anchored injection): ellipticity is recovered without
-    bias by all methods (left); the methods separate on recovered size (right), where our
-    model runs ~8% small from the PSF-core under-concentration."""
-    d = pd.read_parquet(GALREC)
-    arms = [
-        ("truth", "k", "True PSF"),
-        ("implicit", "C3", "Neural PSF"),
-        ("piff", "C0", "PIFF"),
+    """Galaxy recovery (star-anchored injection): ellipticity is recovered without bias by all
+    methods (left); on size (right) our model runs small when its PSF is queried at the median
+    flux but recovers at the clean high-flux limit, where contamination-broadening is gone."""
+    dd = pd.read_parquet("results/galrec_solid_real_default.parquet")
+    dc = pd.read_parquet("results/galrec_solid_real_clean.parquet")
+    rows = [
+        (dd, "truth", "k", "True PSF"),
+        (dd, "implicit", "C3", "Neural PSF (median flux)"),
+        (dc, "implicit", "C2", "Neural PSF (clean flux)"),
+        (dd, "piff", "C0", "PIFF"),
     ]
-    fig, (axe, axs) = plt.subplots(1, 2, figsize=(7.0, 2.5))
-    ys = range(len(arms))
-    for ax, getter, xlabel, vline in [
-        (axe, lambda a: a.eta1_fit - a.eta1_true, r"$\Delta e_1$ (recovered $-$ true)", 0.0),
-        (axs, lambda a: 100 * (a.re_fit - a.re_true) / a.re_true, "size bias [\\%]", 0.0),
+    fig, (axe, axs) = plt.subplots(1, 2, figsize=(7.2, 2.7))
+    ys = range(len(rows))
+    for ax, getter, xlabel in [
+        (axe, lambda a: a.eta1_fit - a.eta1_true, r"$\Delta e_1$ (recovered $-$ true)"),
+        (axs, lambda a: 100 * (a.re_fit - a.re_true) / a.re_true, "size bias [\\%]"),
     ]:
-        for y, (arm, col, _) in zip(ys, arms, strict=True):
-            med, ci = _median_ci(getter(d[d.arm == arm]))
+        for y, (df, arm, col, _) in zip(ys, rows, strict=True):
+            med, ci = _median_ci(getter(df[df.arm == arm]))
             ax.errorbar(med, y, xerr=ci, fmt="o", color=col, capsize=3, ms=5)
-        ax.axvline(vline, color="k", lw=0.6, ls=":")
+        ax.axvline(0.0, color="k", lw=0.6, ls=":")
         ax.set_yticks(list(ys))
-        ax.set_yticklabels([lbl for _, _, lbl in arms])
-        ax.set_ylim(-0.5, len(arms) - 0.5)
+        ax.set_yticklabels([lbl for _, _, _, lbl in rows])
+        ax.set_ylim(-0.5, len(rows) - 0.5)
         ax.set_xlabel(xlabel)
     axe.set_title("ellipticity: unbiased for all", fontsize=8)
-    axs.set_title("size: our model $\\sim$8\\% small", fontsize=8)
+    axs.set_title("size: deficit at median flux, recovered at clean flux", fontsize=8)
     fig.suptitle("Galaxy recovery on real data (star-anchored injection)", fontsize=9, y=1.02)
     fig.tight_layout()
     fig.savefig(f"{FIGDIR}/fig_galrec.pdf", bbox_inches="tight")
