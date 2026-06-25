@@ -478,8 +478,8 @@ much second-moment area (and ${\sim}2\%$ less encircled energy in the central fe
 relative to bright, minimally-contaminated stars; this biases recovered galaxy sizes low.
 Queried instead at the clean high-flux limit, the predicted PSF size matches bright clean
 reserved stars to within $1\%$---a direct HSM-size residual of $+13.4\%$ at the median flux
-falling to $+0.0\pm0.4\%$ at $10^6$ ($n=260$ reserved stars over
-$50$ held-out exposures)---and the recovered galaxy-size bias collapses correspondingly
+falling to $+0.0\pm0.4\%$ at $10^6$ (Table~\ref{tab:fluxsize})---and the recovered
+galaxy-size bias collapses correspondingly
 (de-confounded $-6.2\%\to-1.3\%$). The clean window is broad: the size residual is flat
 from $5\times10^5$ to $6\times10^6$, brighter-fatter contributing only $+0.2\%$ across that
 decade. Controlled simulations confirm the mechanism against \emph{known} truth, with no
@@ -514,6 +514,23 @@ they separate on recovered size.\label{tab:galrec}}
 True PSF            & $-1.2\%$ & $-0.009$ & $-0.000$ \\
 \textbf{Neural PSF (ours)}  & $-7.6\%$ & $-0.005$ & $-0.000$ \\
 \textsc{PIFF}       & $+1.1\%$ & $-0.013$ & $-0.003$ \\
+\enddata
+\end{deluxetable}
+
+\begin{deluxetable}{lc}
+\tablecaption{Predicted PSF second-moment size residual $\delta T/T$ (HSM adaptive moments)
+against bright clean reserved stars, as a function of the flux at which the PSF is queried
+(50 held-out $r$-band exposures, $n=260$ stars, ${\rm S/N}\ge200$; mean\,$\pm$\,s.e.m.). The
+under-concentration is a query-flux effect: at the median star flux the predicted PSF is
+contamination-broadened; at the clean high-flux limit it matches bright clean stars, and the
+window is broad and flat ($\delta T/T$ stays within $1\%$ from $5\times10^5$ to $6\times10^6$,
+brighter-fatter contributing $+0.2\%$ across that decade).\label{tab:fluxsize}}
+\tablehead{\colhead{Query flux (ADU)} & \colhead{$\delta T/T$}}
+\startdata
+median star flux & $+13.4 \pm 0.6\%$ \\
+$10^5$           & $+6.7 \pm 0.5\%$ \\
+$5\times10^5$    & $+0.2 \pm 0.4\%$ \\
+$10^6$           & $+0.0 \pm 0.4\%$ \\
 \enddata
 \end{deluxetable}
 
