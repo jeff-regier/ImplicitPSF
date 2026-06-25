@@ -26,13 +26,29 @@ from implicitpsf.simulate import PATCH
 PRIOR = {"lam": 1.0, "flux_lo": 100.0, "flux_hi": 2000.0, "alpha": 1.5}
 
 
+def _subpixel_shift(stamps, dx, dy):
+    """Fourier sub-pixel shift of (n, P, P) stamps by per-star (dx, dy) px (band-limited, exact)."""
+    p = stamps.shape[1]
+    ky = np.fft.fftfreq(p)[None, :, None]
+    kx = np.fft.fftfreq(p)[None, None, :]
+    phase = np.exp(-2j * np.pi * (kx * dx[:, None, None] + ky * dy[:, None, None]))
+    return np.real(np.fft.ifft2(np.fft.fft2(stamps) * phase))
+
+
 def central_psf_stamps(model, data, index, star_idx):
-    """Render the NN's predicted PSF at each star position (the Gibbs central template)."""
+    """Render the NN's predicted PSF at each star position (the Gibbs central template).
+
+    The model renders an integer-centered PSF, but the star sits at the cutout's SUB-PIXEL center
+    (corner = round(center) - half, star at half + frac). Cleaning with a mis-centered central
+    creates a dipole residual the Gibbs eats as contamination -> severe over-cleaning. Shift the
+    rendered PSF by frac = center - round(center) to match the star.
+    """
     batch = dict(make_batch(data, [index]))
     x = data["x_pixel"][index].numpy()[star_idx]
     y = data["y_pixel"][index].numpy()[star_idx]
     q = torch.tensor(np.column_stack([np.round(x), np.round(y)]), dtype=torch.float32)
-    return render_at(model, batch, q, torch.zeros(len(star_idx)), oversample=1).numpy()
+    stamps = render_at(model, batch, q, torch.zeros(len(star_idx)), oversample=1).numpy()
+    return _subpixel_shift(stamps, x - np.round(x), y - np.round(y))
 
 
 def clean_exposure(model, data, index, columns, n_sweeps, rng, max_stars, prior):

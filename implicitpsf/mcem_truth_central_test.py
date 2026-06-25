@@ -15,6 +15,8 @@ import argparse
 
 import numpy as np
 
+from implicitpsf.add_gibbs_cleaned import central_psf_stamps
+from implicitpsf.baselines.implicit_runner import load_model
 from implicitpsf.contam_model import cell_centers
 from implicitpsf.datasets import load_exposure_file
 from implicitpsf.evaluation.run_eval import exposure_masks
@@ -34,8 +36,9 @@ def ee_at(stamp, center):
     return s[mask].sum() / (s.sum() + 1e-12)
 
 
-def exposure_test(data, index, reserved_ids, prior, n_sweeps, rng, device):
-    """Clean the exposure's clean stars with the TRUE central; return per-star EE@r2 triples."""
+def exposure_test(data, index, reserved_ids, prior, n_sweeps, rng, device, model=None):
+    """Clean the exposure's clean stars; central = TRUE PSF, or the NN model's PSF if `model` given
+    (what the EM actually uses). Return per-star (contaminated, cleaned, truth) EE@r2 triples."""
     clean, reserved = exposure_masks(data, index, reserved_ids)
     idx = np.nonzero(clean & ~reserved)[0]
     if len(idx) < 5:
@@ -45,7 +48,8 @@ def exposure_test(data, index, reserved_ids, prior, n_sweeps, rng, device):
     field = {"chromatic": False, **data["true_field"][index]}
     ref_color = COLOR_MEAN if field["chromatic"] else 0.0
     truecen = truth_stamps(field, x, y, ref_color).reshape(len(idx), -1)  # true PSF, star frame
-    cg = np.clip(truecen, 0, None)
+    raw = central_psf_stamps(model, data, index, idx) if model is not None else truecen
+    cg = np.clip(raw.reshape(len(idx), -1), 0, None)
     cg = cg / (cg.sum(1, keepdims=True) + 1e-12)
     cut = data["cutouts"][index].numpy()[idx].reshape(len(idx), -1)
     var = data["variance"][index].numpy()[idx].reshape(len(idx), -1)
@@ -75,22 +79,25 @@ def main():
     parser.add_argument("--prior-lam", type=float, default=1.0)
     parser.add_argument("--prior-alpha", type=float, default=1.5)
     parser.add_argument("--device", default="cuda")
+    parser.add_argument("--model-central", default=None, help="NN ckpt for the central (else truth)")
     args = parser.parse_args()
     set_psf_model(args.psf_model)
     prior = {"lam": args.prior_lam, "flux_lo": 100.0, "flux_hi": 2000.0, "alpha": args.prior_alpha}
     rng = np.random.default_rng(0)
+    model = load_model(args.model_central, device=args.device) if args.model_central else None
     manifest = load_manifest(args.manifest)
     test = [(e, i) for e, i in sorted(manifest["exposures"].items()) if i["split"] == "test"]
     rows = []
     for eid, info in test[: args.max_exposures]:
         data = load_exposure_file(f"{args.data_dir}/{info['file']}")
         out = exposure_test(data, info["index"], reserved_star_ids(manifest, eid), prior,
-                            args.n_sweeps, rng, args.device)
+                            args.n_sweeps, rng, args.device, model)
         if out is not None:
             rows.append(out)
     r = np.concatenate(rows)
     cut_ee, cln_ee, tru_ee = r[:, 0], r[:, 1], r[:, 2]
-    print(f"n stars: {len(r)}  (true central, _SIZES from mcem_sampler, lam={args.prior_lam})")
+    central = args.model_central or "TRUE"
+    print(f"n stars: {len(r)}  (central={central}, lam={args.prior_lam})")
     print(f"  EE@r2 contaminated mean = {cut_ee.mean():.4f}")
     print(f"  EE@r2 cleaned      mean = {cln_ee.mean():.4f}")
     print(f"  EE@r2 truth        mean = {tru_ee.mean():.4f}")
