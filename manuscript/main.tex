@@ -239,8 +239,13 @@ seeing) that per-exposure empirical models cannot represent (\S\ref{sec:chromati
 \subsection{Contamination correction by Monte Carlo EM} \label{sec:mcem}
 
 Reserved ``clean'' stars are never truly clean: sub-threshold blends add faint light to
-their cutouts and bias the learned PSF toward an under-concentrated profile. We remove this
-bias with a latent-variable model fit by expectation maximization \citep{dempster1977em}.
+their cutouts and bias the learned PSF toward an under-concentrated profile. The flux query
+of \S\ref{sec:galrec} mitigates this implicitly---the flux-conditioned model has learned
+that fainter stars are more contaminated, so its bright-limit PSF is nearly clean---but that
+relies on extrapolating the model toward the bright end of its training range. Here we
+instead remove the bias \emph{explicitly}, with a latent-variable model fit by expectation
+maximization \citep{dempster1977em}, yielding a per-star correction and a calibrated
+contamination model that does not depend on such extrapolation.
 
 \paragraph{Model} For clean star $i$, the cutout $\mathbf{y}_i$ is a bright central source ---
 the star, whose surface brightness is the effective PSF $\boldsymbol\pi_\theta(\mathbf{x}_i)$
@@ -497,9 +502,10 @@ consequential quantity for shear, is unbiased throughout.
 \includegraphics[width=0.75\textwidth]{figures/fig_galrec.pdf}
 \caption{Galaxy recovery on real data (star-anchored injection), median $\pm$ bootstrap 95\%
 CI per PSF. Left: recovered ellipticity is low-bias ($|\Delta e_1|\lesssim0.013$) for all
-three methods. Right: the methods separate on recovered \emph{size}---our model runs
-${\sim}8\%$ small (the PSF-core under-concentration), while \textsc{PIFF} and the
-true PSF are near zero (\S\ref{sec:galrec}).\label{fig:galrec}}
+three methods. Right: rendered at the median query flux the methods separate on recovered
+\emph{size}---our model runs ${\sim}8\%$ small (contamination-broadening of the predicted
+PSF, removed by querying at the clean high-flux limit; \S\ref{sec:galrec}), while
+\textsc{PIFF} and the true PSF are near zero.\label{fig:galrec}}
 \end{figure*}
 
 
