@@ -122,7 +122,10 @@ def evaluate(ckpt, manifest, data_dir, max_exposures, gpu):
 
 def one_iteration(it, central, args, clean_dir, log_path):
     """Run E-step + M-step + diagnostic for one EM iteration; return the new central checkpoint."""
-    e_step(central, args.base_data_dir, clean_dir, args.n_keep, args.n_sweeps, args.gpu,
+    # --fixed-central: clean with the data-supported initial PSF every iteration instead of the
+    # running (over-sharpening) model -- breaks the feedback that makes truth an unstable point.
+    clean_central = args.init_checkpoint if args.fixed_central else central
+    e_step(clean_central, args.base_data_dir, clean_dir, args.n_keep, args.n_sweeps, args.gpu,
            args.prior_lam)
     manifest = repoint_manifest(args.base_manifest, clean_dir, f"{args.work_dir}/manifest.json")
     out_dir = f"{args.work_dir}/model_it{it}"
@@ -150,6 +153,8 @@ def main():
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--gpu", default="1", help="single GPU for this chain (clean+train+eval)")
     parser.add_argument("--prior-lam", type=float, default=1.0, help="cleaning contamination rate")
+    parser.add_argument("--fixed-central", action="store_true",
+                        help="clean with the initial PSF every iter (stabilizes truth)")
     args = parser.parse_args()
     Path(args.work_dir).mkdir(parents=True, exist_ok=True)
     clean_dir = f"{args.work_dir}/clean"  # reused every iteration (overwritten) -> bounded disk
