@@ -130,7 +130,7 @@ def implicit_kernels(model, data, index, fit_mask, x, y, query_flux=None):
     return render_at(model, batch, queries, colors, query_fluxes=qf, oversample=OVERSAMPLE).numpy()
 
 
-def implicit_interp_kernels(model, data, index, fit_mask, x, y, grid):
+def implicit_interp_kernels(model, data, index, fit_mask, x, y, grid, query_flux=None):
     """The implicit ePSF rendered through the SAME native-sample -> InterpolatedImage(lanczos15) ->
     fine-lattice path as the truth/PIFF arms (oversample=1), instead of render_at's direct fine
     evaluation. Isolates whether the size deficit is an artifact of the render_at rendering path:
@@ -140,7 +140,8 @@ def implicit_interp_kernels(model, data, index, fit_mask, x, y, grid):
     batch["flux"] = batch["flux"] * torch.from_numpy(fit_mask).unsqueeze(0)
     queries = torch.from_numpy(np.column_stack([np.round(x), np.round(y)]).astype(np.float32))
     colors = torch.zeros(len(x))
-    native = render_at(model, batch, queries, colors, oversample=1).numpy()  # (n, PATCH, PATCH)
+    qf = None if query_flux is None else torch.full((len(x),), float(query_flux))
+    native = render_at(model, batch, queries, colors, query_fluxes=qf, oversample=1).numpy()
     kernels = []
     for stamp in native:
         image = galsim.Image(np.ascontiguousarray(stamp), scale=PIXEL_SCALE)
@@ -230,7 +231,8 @@ def evaluate_exposure(model, data, index, reserved_ids, workdir, free_n, with_ps
     arms = {
         "truth": truth_kernels(profiles, grid),
         "implicit": implicit_kernels(model, data, index, fit_mask, ax, ay, query_flux),
-        "implicit_interp": implicit_interp_kernels(model, data, index, fit_mask, ax, ay, grid),
+        "implicit_interp": implicit_interp_kernels(model, data, index, fit_mask, ax, ay, grid,
+                                                   query_flux),
         "piff": piff_kernels(piff_psf, ax, ay, grid),
     }
     if with_psfex:  # PSFEx fit + DES_PSFEx render is ~10 min/exposure; opt in for the final table

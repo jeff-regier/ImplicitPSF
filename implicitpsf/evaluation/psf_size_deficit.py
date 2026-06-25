@@ -92,6 +92,8 @@ def main():
     parser.add_argument("--snr-min", type=float, default=200.0)
     parser.add_argument("--max-exposures", type=int, default=20)
     parser.add_argument("--flux-sweep", action="store_true", help="render at fixed fluxes vs own")
+    parser.add_argument("--sweep-fluxes", nargs="+", type=float, default=None,
+                        help="explicit fixed query fluxes to sweep (e.g. find the BF turn-up)")
     args = parser.parse_args()
 
     manifest = load_manifest(args.manifest)
@@ -102,7 +104,12 @@ def main():
     for eid, info in want.items():
         by_file.setdefault(info["file"], []).append((info["index"], eid))
 
-    fluxes = [None, "median"] if not args.flux_sweep else [None, "median", 1e4, 1e5, 1e6]
+    if args.sweep_fluxes:
+        fluxes = [None, "median", *args.sweep_fluxes]
+    elif args.flux_sweep:
+        fluxes = [None, "median", 1e4, 1e5, 1e6]
+    else:
+        fluxes = [None, "median"]
     n_exp = 0
     per_flux = {f: ([], []) for f in fluxes}
     for path in files:
