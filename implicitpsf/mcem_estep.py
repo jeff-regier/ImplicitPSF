@@ -120,10 +120,10 @@ def _setup(size=32, grid_n=16, core=2.5):
     return centers, central_g, cols
 
 
-def hier_sbc(rng, n_draws=10, n_stars=25, n_sweeps=60, lo=100.0, hi=2000.0, noise=30.0):
+def hier_sbc(rng, n_draws=10, n_stars=25, n_sweeps=60, lo=100.0, hi=2000.0, noise=30.0, grid_n=16):
     """Hierarchical SBC: draw (lambda, alpha) from the hyperprior, generate, infer, check 90% CI
     coverage of both. Calibrated => ~0.90 (wide-but-calibrated is fine; biased is not)."""
-    centers, central_g, cols = _setup()
+    centers, central_g, cols = _setup(grid_n=grid_n)
     weight = np.full(central_g.shape, 1.0 / noise**2)
     lcov = acov = 0
     for _ in range(n_draws):
@@ -145,11 +145,11 @@ def hier_sbc(rng, n_draws=10, n_stars=25, n_sweeps=60, lo=100.0, hi=2000.0, nois
 
 
 def hier_mixing(rng, lam_t=1.0, alpha_t=1.8, n_stars=25, n_sweeps=120, n_chains=4,
-                lo=100.0, hi=2000.0, noise=30.0):
+                lo=100.0, hi=2000.0, noise=30.0, grid_n=16):
     """Multi-chain Gelman-Rubin R-hat + ESS on the GLOBAL (lambda, alpha) chain for ONE generated
     star aggregate. Over-dispersed inits (independent prior draws per chain) -> R-hat ~1 means the
     coupled (lambda, detections) Gibbs mixes; R-hat >> 1 flags the self-consistent-mode trap."""
-    centers, central_g, cols = _setup()
+    centers, central_g, cols = _setup(grid_n=grid_n)
     weight = np.full(central_g.shape, 1.0 / noise**2)
     truth = {"lam": lam_t, "flux_lo": lo, "flux_hi": hi, "alpha": alpha_t}
     datas = []
@@ -184,13 +184,14 @@ def main():
     parser.add_argument("--n-draws", type=int, default=10)
     parser.add_argument("--n-stars", type=int, default=25)
     parser.add_argument("--n-sweeps", type=int, default=60)
+    parser.add_argument("--grid-n", type=int, default=16)
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
     rng = np.random.default_rng(args.seed)
     if args.mode == "mixing":
-        hier_mixing(rng, n_stars=args.n_stars, n_sweeps=args.n_sweeps)
+        hier_mixing(rng, n_stars=args.n_stars, n_sweeps=args.n_sweeps, grid_n=args.grid_n)
         return
-    lc, ac = hier_sbc(rng, args.n_draws, args.n_stars, args.n_sweeps)
+    lc, ac = hier_sbc(rng, args.n_draws, args.n_stars, args.n_sweeps, grid_n=args.grid_n)
     print(f"hierarchical SBC ({args.n_draws} draws): lambda coverage {lc:.2f}, "
           f"alpha coverage {ac:.2f}  (want ~0.90)")
 
