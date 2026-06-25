@@ -42,11 +42,9 @@ with \textsc{PIFF}, while recovered \emph{sizes} run a few percent small. We tra
 the flux at which the PSF is queried: the model conditions on source flux and has learned,
 from training stars carrying faint unresolved neighbours, that fainter stars are more
 fractionally contaminated, so its predicted PSF narrows toward the clean PSF in the bright
-limit. Querying at that clean limit removes most of the size bias---returning the PSF
-concentration to truth in controlled simulations, where contamination is the only
-flux-dependent effect---and a Monte Carlo EM that infers and subtracts each star's
-contaminant posterior supplies the principled per-star correction and a calibrated
-contamination model.
+limit. Querying at that clean limit removes most of the size bias, returning the PSF
+concentration to truth in controlled simulations where contamination is the only
+flux-dependent effect.
 On real data the same query brings the predicted PSF size to within $1\%$ of bright clean
 stars---from a ${\sim}13\%$ second-moment excess at the median flux---and reduces the
 recovered galaxy-size bias toward the protocol floor.
@@ -236,82 +234,6 @@ necessary to avoid a spin-2 corruption from extended sources in the context.
 per-object chromatic PSF (differential chromatic refraction and wavelength-dependent
 seeing) that per-exposure empirical models cannot represent (\S\ref{sec:chromatic}).
 
-\subsection{Contamination correction by Monte Carlo EM} \label{sec:mcem}
-
-Reserved ``clean'' stars are never truly clean: sub-threshold blends add faint light to
-their cutouts and bias the learned PSF toward an under-concentrated profile. The flux query
-of \S\ref{sec:galrec} mitigates this implicitly---the flux-conditioned model has learned
-that fainter stars are more contaminated, so its bright-limit PSF is nearly clean---but that
-relies on extrapolating the model toward the bright end of its training range. Here we
-instead remove the bias \emph{explicitly}, with a latent-variable model fit by expectation
-maximization \citep{dempster1977em}, yielding a per-star correction and a calibrated
-contamination model that does not depend on such extrapolation.
-
-\paragraph{Model} For clean star $i$, the cutout $\mathbf{y}_i$ is a bright central source ---
-the star, whose surface brightness is the effective PSF $\boldsymbol\pi_\theta(\mathbf{x}_i)$
-scaled by an unknown amplitude $a_i$ --- plus faint nuisance sources and noise with the DES
-inverse-variance weights $\mathbf{w}_i$,
-\begin{equation}
-\mathbf{y}_i = a_i\,\boldsymbol\pi_\theta(\mathbf{x}_i)
-  + \textstyle\sum_{j} f_{ij}\,\mathbf{g}(\boldsymbol\mu_{ij},\Sigma_{ij}) + \boldsymbol\varepsilon_i .
-\end{equation}
-The nuisance sources are too faint to classify, so we model each as a single bivariate
-Gaussian $\mathbf{g}(\boldsymbol\mu,\Sigma)$ of flux $f$, sub-pixel centroid $\boldsymbol\mu$,
-and covariance $\Sigma = \Sigma_\theta(\mathbf{x}_i) + LL^\top$, where $\Sigma_\theta$ is the
-current PSF second-moment matrix and $LL^\top\succeq0$ (Cholesky factor $L$) is a non-negative
-intrinsic broadening. A contaminant is thus at least as broad as a point source and may be
-extended and elliptical, with no star/galaxy dichotomy.
-
-\paragraph{Latents, prior, and parameters} The nuisance configuration
-$\mathbf{z}_i=\{(b_{ic},f_{ic},\boldsymbol\mu_{ic},L_{ic})\}$ lives on a per-pixel detection
-grid, at most one source per cell ($b_{ic}\in\{0,1\}$): a fixed-dimensional mean-field
-representation that avoids transdimensional moves. It carries an informative, physically
-motivated prior $p(\mathbf{z})$ --- per-cell Bernoulli rate, truncated power-law flux (slope
-and bright cutoff set by DES source counts and the detection limit that defines
-``sub-threshold''), and a weak prior on $L$. This prior alone resolves the degeneracy between
-a broad PSF with no contamination and a sharp PSF with faint contamination, and so sets the
-magnitude of the correction. Crucially, its hyperparameters --- the per-cell detection rate
-$\lambda$ and the flux power-law slope $\alpha$ --- are unknown on real data, so we do not fix
-them: they are \emph{global} random variables shared across stars, with weakly-informative
-hyperpriors (a conjugate Gamma rate; a Gamma slope), and are inferred jointly. The contamination
-level is thus learned from the many-star aggregate rather than assumed; \S\ref{sec:sim} tests on
-simulations with a known PSF field whether the inferred $(\lambda,\alpha)$ recover the generator's
-together with the PSF concentration and galaxy sizes. We place \emph{no} prior on the network weights $\theta$ --- we
-seek the maximum marginal-likelihood PSF, not a Bayesian network --- and none on the central
-amplitudes $a_i$. These are parameters: $a_i$ is profiled in closed form and $\theta$ is fit
-in the M-step. Only the counts-endowed nuisances are marginalized,
-\begin{equation}
-\hat\theta=\arg\max_\theta\sum_i\log\!\int p(\mathbf{y}_i\mid\theta,\mathbf{z}_i)\,
-  p(\mathbf{z}_i)\,d\mathbf{z}_i ,
-\end{equation}
-with $a_i$ profiled inside the integrand.
-
-\paragraph{Monte Carlo EM} The integral is intractable, so we use EM with the E-step
-expectation replaced by a Monte Carlo average over contaminant draws \citep{wei1990mcem}. At
-iteration $t$ with current PSF $\theta^{(t)}$: (i) \emph{E-step} --- for each star draw $K$
-samples $\mathbf{z}_i^{(t,k)}\sim p(\mathbf{z}_i\mid\mathbf{y}_i,\theta^{(t)})$ by collapsed
-Gibbs, profiling $a_i$ each sweep (it has no prior), marginalizing each flux in closed form,
-resampling detection, centroid, and covariance per cell, and --- globally across all stars ---
-resampling $(\lambda,\alpha)$ from the pooled contaminant sufficient statistics, a hierarchical
-Gibbs step; the Monte Carlo objective is
-$\hat Q(\theta\mid\theta^{(t)})=K^{-1}\sum_{i,k}\log p(\mathbf{y}_i\mid\theta,\mathbf{z}_i^{(t,k)})$.
-(ii) \emph{M-step} --- increase $\hat Q$ by stochastic gradient descent warm-started from
-$\theta^{(t)}$, a generalized EM step \citep{dempster1977em} since the network is not maximized
-exactly; operationally each minibatch draws one of the $K$ imputations per star and subtracts it,
-training against the multiply imputed cleaned stars so the contaminant posterior \emph{uncertainty}
-propagates into the fit rather than a point estimate. (iii) Iterate until the PSF and the recovered galaxy sizes
-(\S\ref{sec:sim}) stop changing; later iterations' sharper central template removes residual
-contamination that the contaminated initial template leaves. We increase $K$ across iterations
-and monitor Monte Carlo error \citep{booth1999mcem,levine2001mcem}; a stochastic-approximation
-variant \citep{delyon1999saem} amortizes the per-iteration resampling cost.
-
-\paragraph{Sampler validation} Two checks gate the E-step. \emph{Calibration}: simulation-based
-calibration --- draw $\mathbf{z}$ from the prior, synthesize a stamp, infer, and require nominal
-credible-interval coverage of the total contaminant flux and count (this caught three sampler
-bugs in development). \emph{Mixing}: per star we run dispersed-initialization chains and report
-the Gelman--Rubin $\hat R$ and effective sample size of the flux and count summaries; the E-step
-proceeds only where $\hat R\!\approx\!1$ with adequate effective sample size, so a poorly mixing
-chain cannot silently corrupt the fit.
 
 \section{Data} \label{sec:data}
 
@@ -492,11 +414,9 @@ brighter-fatter to confound: the same flux query drives the learned PSF concentr
 $\delta\mathrm{EE}=-0.0078$ at the median flux to $-0.0014$ at the clean limit
 (\S\ref{sec:sim}), i.e.\ essentially onto the true PSF. That the model recovers the clean
 PSF purely through its learned flux dependence is independent confirmation that
-faint-neighbour contamination of the training stars is the cause; the Monte Carlo EM of
-\S\ref{sec:mcem} removes that contamination explicitly and per-star, supplying a calibrated
-contamination model and cleaning the small residual. The size bias is thus largely a
-query-flux effect rather than an irreducible limitation; recovered ellipticity, the
-consequential quantity for shear, is unbiased throughout.
+faint-neighbour contamination of the training stars is the cause. The size bias is thus
+largely a query-flux effect rather than an irreducible limitation; recovered ellipticity,
+the consequential quantity for shear, is unbiased throughout.
 \begin{figure*}
 \centering
 \includegraphics[width=0.75\textwidth]{figures/fig_galrec.pdf}
@@ -574,42 +494,19 @@ verified floor $1.0$), recovering both ellipticity components.
 $+4.8\%$ size bias on the star-free truth grid; the blend forward-model loss reduces it to
 $+0.7\%$ (${\approx}7\times$).
 
-\paragraph{Contamination correction by Monte Carlo EM} Adding the faint-neighbour
-contamination of \S\ref{sec:galrec} to the training stars reproduces the size deficit in
-simulation, where the truth PSF is known exactly: the learned PSF is under-concentrated by
-$\delta\mathrm{EE}(r{\le}2\,{\rm px})=-0.0078$ relative to truth at the median query flux,
-and injected galaxies are recovered $-2.4\%$ small (the simulation analogue of the real
-deficit, after differencing against recovery through the known clean PSF to cancel the
-protocol floor). Because the simulation has no brighter-fatter, the model's only
-flux-dependent effect is the contamination it learned, and querying its PSF at the clean
-high-flux limit---with no cleaning at all---already drives $\delta\mathrm{EE}$ from
-$-0.0078$ to $-0.0014$, i.e.\ essentially onto truth; this is the controlled,
-truth-anchored counterpart of the real-data flux query in \S\ref{sec:galrec}. The Monte
-Carlo EM of \S\ref{sec:mcem} removes the same contamination explicitly and per-star. Cleaning each training star against its inferred
-contaminant posterior and refitting the field drives the PSF concentration to truth
-($\delta\mathrm{EE}\to0$ at the fixed point, converged over EM iterations and stable across
-five seeds) and shrinks the recovered galaxy-size bias from $-2.4\%$ to $-0.8\%$. The global
-contamination hyperparameters---the per-stamp rate $\lambda$ and the flux power-law slope
-$\alpha$---are inferred jointly rather than assumed. The inference is calibrated:
-simulation-based calibration gives nominal $90\%$ credible-interval coverage ($1.00$ and
-$0.94$ for $\lambda$ and $\alpha$) with well-mixed chains (Gelman--Rubin $\hat R<1.05$).
-Run on the simulation itself, it recovers the effective contamination rate---the quantity
-that sets the deficit---to within its uncertainty ($\lambda_{\rm true}=0.56$ per stamp,
-posterior median $0.59$, $90\%$ CI $[0.50,0.67]$); the flux slope is recovered flatter than
-injected ($\alpha_{\rm true}=1.5$, posterior $\approx1.1$), as expected when the detectable
-contaminants are biased bright relative to the source population by incomplete detection of
-the faintest neighbours. The EM marginalizes the slope, so this bias does not propagate to
-the PSF. Two diagnostics were decisive and are worth recording. First, the cleaning
-template must be rendered at each star's \emph{sub-pixel} centre: an integer-grid template
-is offset from the star and the sampler removes the resulting dipole residual as spurious
-contamination, over-sharpening the PSF and---because the cleaned PSF re-enters the next
-E-step---running the EM away from truth; comparing the sampler's bias against the \emph{known}
-PSF as the template isolated this. Second, the contaminant prior must exclude sources fainter
-than the per-pixel noise, which are unidentifiable from noise; including them produced
-per-cell false detections that biased the inferred rate high, caught by the calibration test.
-With both addressed, the correction recovers the truth on the two axes that matter for
-weak lensing---PSF concentration and recovered galaxy size---driven by an inferred
-contamination rate that itself matches the simulation.
+\paragraph{The size deficit reproduces in simulation and is a query-flux effect} Adding the
+faint-neighbour contamination of \S\ref{sec:galrec} to the training stars reproduces the
+size deficit in simulation, where the truth PSF is known exactly: the learned PSF is
+under-concentrated by $\delta\mathrm{EE}(r{\le}2\,{\rm px})=-0.0078$ relative to truth at
+the median query flux, and injected galaxies are recovered $-2.4\%$ small (the simulation
+analogue of the real deficit, after differencing against recovery through the known clean
+PSF to cancel the protocol floor). Because the simulation has no brighter-fatter, the
+model's only flux-dependent effect is the contamination it learned, and querying its PSF at
+the clean high-flux limit---with no cleaning at all---drives $\delta\mathrm{EE}$ from
+$-0.0078$ to $-0.0014$, i.e.\ essentially onto truth. This is the controlled,
+truth-anchored counterpart of the real-data flux query in \S\ref{sec:galrec}, confirming
+against known truth that the model's bright-limit PSF is the clean one and that the deficit
+is the contamination the flux-conditioned model has implicitly learned to separate.
 
 \paragraph{Galaxy-context corrupts PSF ellipticity---and the fix} Injecting galaxy
 detections into the simulation, a model that attends to \emph{all} detections (including
@@ -688,11 +585,15 @@ $\delta T/T$ rising at faint magnitudes. Controlled simulations with known truth
 mechanism and that the clean-flux PSF is the true one ($\delta\mathrm{EE}$ from $-0.0078$ to
 $-0.0014$; \S\ref{sec:sim}), and the effect is absent at any decoder capacity in clean
 simulations, ruling out a generic spectral-bias limitation of the decoder. We identify
-faint-neighbour contamination of the nominally-clean training stars as the cause; the Monte
-Carlo EM of \S\ref{sec:mcem} removes it explicitly and per-star, supplying a calibrated
-contamination model and cleaning the residual. The practical prescription---render the
-inferential PSF at the clean-flux limit---removes most of this, the main residual systematic
-to control before a shear analysis.
+faint-neighbour contamination of the nominally-clean training stars as the cause, and the
+practical prescription---render the inferential PSF at the clean-flux limit---removes most
+of it, the main residual systematic to control before a shear analysis. As a principled
+cross-check we also fit the contamination explicitly, by a Monte Carlo expectation
+maximization \citep{dempster1977em,wei1990mcem} that infers each star's contaminant
+posterior (with the contamination rate inferred jointly across stars rather than assumed)
+and retrains the field against the cleaned stars; in controlled simulations this reaches the
+same truth as the flux query, to within the seed scatter, confirming the mechanism but not
+improving on the simpler query, which we therefore adopt as the operative correction.
 
 \section{Conclusion} \label{sec:conclusion}
 
@@ -703,9 +604,8 @@ bias (on par with \textsc{PIFF}) on a star-anchored injection test, while additi
 correcting a chromatic systematic and remaining robust in star-sparse exposures. The one
 residual---recovered galaxy sizes a few percent small---we trace to the flux at which the
 PSF is queried: the flux-conditioned model has learned that fainter stars are more
-contaminated, so rendering the PSF at the clean high-flux limit removes most of the bias,
-with a Monte Carlo EM providing the principled per-star contamination correction. Controlled
-simulations motivate two further training choices: a blend forward-model loss and
+contaminated, so rendering the PSF at the clean high-flux limit removes most of the bias.
+Controlled simulations motivate two further training choices: a blend forward-model loss and
 point-source-only attention context. The latter follows from diagnosing a spin-2
 representation failure triggered by galaxy detections in context.
 
