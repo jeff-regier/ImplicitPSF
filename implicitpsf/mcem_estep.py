@@ -185,13 +185,16 @@ def main():
     parser.add_argument("--n-stars", type=int, default=25)
     parser.add_argument("--n-sweeps", type=int, default=60)
     parser.add_argument("--grid-n", type=int, default=16)
+    parser.add_argument("--flux-lo", type=float, default=100.0)
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
     rng = np.random.default_rng(args.seed)
     if args.mode == "mixing":
-        hier_mixing(rng, n_stars=args.n_stars, n_sweeps=args.n_sweeps, grid_n=args.grid_n)
+        hier_mixing(rng, n_stars=args.n_stars, n_sweeps=args.n_sweeps, grid_n=args.grid_n,
+                    lo=args.flux_lo)
         return
-    lc, ac = hier_sbc(rng, args.n_draws, args.n_stars, args.n_sweeps, grid_n=args.grid_n)
+    lc, ac = hier_sbc(rng, args.n_draws, args.n_stars, args.n_sweeps, grid_n=args.grid_n,
+                      lo=args.flux_lo)
     print(f"hierarchical SBC ({args.n_draws} draws): lambda coverage {lc:.2f}, "
           f"alpha coverage {ac:.2f}  (want ~0.90)")
 
