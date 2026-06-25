@@ -231,6 +231,13 @@ def parse_args():
         help="encode context stamps with a CNN (spatial inductive bias) instead of a flat MLP; "
         "better at filtering local contamination for the clean-target correction",
     )
+    parser.add_argument(
+        "--asinh-context",
+        action="store_true",
+        help="asinh-compress the normalized context stamps so the encoder reads bright cores and "
+        "faint wings on a balanced scale (high-dynamic-range handling; --asinh-beta sets the knee)",
+    )
+    parser.add_argument("--asinh-beta", type=float, default=1e-3)
     parser.add_argument("--context-dropout-max", type=float, default=0.5)
     parser.add_argument("--no-attention", action="store_true")
     parser.add_argument(
@@ -314,6 +321,8 @@ def main():
         blend_max_targets=args.blend_max_targets,
         point_source_context=args.point_source_context,
         cnn_encoder=args.cnn_encoder,
+        asinh_context=args.asinh_context,
+        asinh_beta=args.asinh_beta,
     )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)

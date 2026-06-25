@@ -285,11 +285,18 @@ class ImplicitPSF(pl.LightningModule):
         blend_max_targets=None,
         point_source_context=True,
         cnn_encoder=False,
+        asinh_context=False,
+        asinh_beta=1e-3,
     ):
         super().__init__()
         self.save_hyperparameters()
         self.point_source_context = point_source_context
         self.cnn_encoder = cnn_encoder
+        # asinh-compress the (unit-sum-normalized) context stamps so the encoder reads the bright
+        # core and faint wings on a balanced scale -- the intra-stamp dynamic range reaches ~700x on
+        # real bright stars. beta sets the linear->log knee (values <<beta stay linear, >>beta log).
+        self.asinh_context = asinh_context
+        self.asinh_beta = asinh_beta
 
         self.patch_size = patch_size
         self.ccd_size = (ccd_width, ccd_height)
@@ -424,6 +431,8 @@ class ImplicitPSF(pl.LightningModule):
         cutouts_flat = rearrange(cutouts, "b s h w -> b s (h w)")
         scale = cutouts_flat.abs().sum(dim=-1, keepdim=True) + 1e-8
         normed = cutouts_flat / scale
+        if self.asinh_context:  # compress intra-stamp dynamic range (core vs wings)
+            normed = torch.asinh(normed / self.asinh_beta)
         if self.cnn_encoder:
             b, s = cutouts.shape[:2]
             images = normed.reshape(b * s, 1, self.patch_size, self.patch_size)
