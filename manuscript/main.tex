@@ -551,10 +551,16 @@ contaminant posterior and refitting the field drives the PSF concentration to tr
 ($\delta\mathrm{EE}\to0$ at the fixed point, converged over EM iterations and stable across
 five seeds) and shrinks the recovered galaxy-size bias from $-2.4\%$ to $-0.8\%$. The global
 contamination hyperparameters---the per-stamp rate $\lambda$ and the flux power-law slope
-$\alpha$---are inferred jointly rather than assumed, and are recovered with calibrated
-uncertainty: simulation-based calibration gives nominal $90\%$ credible-interval coverage
-($1.00$ and $0.94$ for $\lambda$ and $\alpha$) with well-mixed chains (Gelman--Rubin
-$\hat R<1.05$). Two diagnostics were decisive and are worth recording. First, the cleaning
+$\alpha$---are inferred jointly rather than assumed. The inference is calibrated:
+simulation-based calibration gives nominal $90\%$ credible-interval coverage ($1.00$ and
+$0.94$ for $\lambda$ and $\alpha$) with well-mixed chains (Gelman--Rubin $\hat R<1.05$).
+Run on the simulation itself, it recovers the effective contamination rate---the quantity
+that sets the deficit---to within its uncertainty ($\lambda_{\rm true}=0.56$ per stamp,
+posterior median $0.59$, $90\%$ CI $[0.50,0.67]$); the flux slope is recovered flatter than
+injected ($\alpha_{\rm true}=1.5$, posterior $\approx1.1$), as expected when the detectable
+contaminants are biased bright relative to the source population by incomplete detection of
+the faintest neighbours. The EM marginalizes the slope, so this bias does not propagate to
+the PSF. Two diagnostics were decisive and are worth recording. First, the cleaning
 template must be rendered at each star's \emph{sub-pixel} centre: an integer-grid template
 is offset from the star and the sampler removes the resulting dipole residual as spurious
 contamination, over-sharpening the PSF and---because the cleaned PSF re-enters the next
@@ -562,8 +568,9 @@ E-step---running the EM away from truth; comparing the sampler's bias against th
 PSF as the template isolated this. Second, the contaminant prior must exclude sources fainter
 than the per-pixel noise, which are unidentifiable from noise; including them produced
 per-cell false detections that biased the inferred rate high, caught by the calibration test.
-With both addressed, the correction recovers the truth on all three axes---PSF concentration,
-galaxy size, and the contamination hyperparameters.
+With both addressed, the correction recovers the truth on the two axes that matter for
+weak lensing---PSF concentration and recovered galaxy size---driven by an inferred
+contamination rate that itself matches the simulation.
 
 \paragraph{Galaxy-context corrupts PSF ellipticity---and the fix} Injecting galaxy
 detections into the simulation, a model that attends to \emph{all} detections (including
