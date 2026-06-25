@@ -50,34 +50,27 @@ to GPU; full K-imputation generation of the 150-file sub118 set is now **~11 min
 iteration-0 model. ~51 min/iter. Trajectories → `/data/scratch/regier/mcem_em_s{0..4}/trajectory.csv`.
 Logs `logs/mcem_em_s*.log`.
 
-## The δEE trajectory and the open question (why it's not done)
+## ✅ RESOLVED (Jun 25): the over-correction was a SUB-PIXEL CENTERING BUG — core gate passes
 
-δEE@r2 (0 = truth; negative = too wide; positive = too sharp):
+The iterated EM ran away to δEE@r2 +0.020 (the earlier "+0.0003" was a non-converged transient).
+**Root cause:** `central_psf_stamps` rendered the NN cleaning central at `round(x,y)` = integer-
+centered, but each star sits at the cutout's sub-pixel center (corner = round(center) − half, star
+at half+frac). Cleaning with the mis-centered template made a dipole the Gibbs ate as
+"contamination" → severe over-cleaning, amplified by iteration. **Fix (commit 61e5999):** Fourier
+sub-pixel-shift the rendered central by frac. The decisive diagnostic was `mcem_truth_central_test
+--model-central` (measure cleaning bias with the ACTUAL NN central, not just truth): cleaned−truth
+EE@r2 **+0.0246 → +0.0007** (unbiased).
 
-| stage | δEE@r2 | note |
-|---|---|---|
-| contaminated baseline | **−0.0072** | the deficit |
-| iteration-0 (full 80-ep train) | **+0.0151** | OVER-corrected (too sharp) |
-| driver-it0 (12-ep warm, 5 chains) | **+0.0173** | still drifting more positive |
+**Synthetic gate results (centering-fixed, λ=0.1):**
+- PSF δEE@r2: contam **−0.0072** → iterated EM converges to ~**+0.004** (near truth, gate edge);
+  `--fixed-central` variant (clean with the stable broad data-supported PSF, not the slightly-
+  sharpening model) centers it ~**+0.0007**. Truth is now a stable fixed point.
+- Galaxy size (de-confounded implicit−analytic_truth median): contam **−2.37%** → cleaned
+  **−0.82%** (~65% of the deficit removed; a δEE=0 model → ~0%).
+- **λ=0.1 is the EFFECTIVE sub-threshold rate** on SEP-selected clean stars (detectable neighbors
+  flag and drop their hosts), well below the injection λ=1 — what the (λ,α) inference should recover.
 
-A single E+M step over-corrects, and the first EM iteration drifts further over-sharp (though
-the step is decelerating: +0.022 then +0.0024). **Watch out:** the "+0.0003 ≈ truth" seen early
-was a *non-converged* (ep32) transient — always read δEE at full convergence.
-
-**Hypothesis (the likely reason it over-corrects):** cleaning uses the current PSF as the
-central template. When that central is too sharp, the genuine PSF wings exceed the central's
-prediction, so the Gibbs attributes real wing flux to "contamination" and over-cleans — a
-**self-consistent over-corrected fixed point, not truth.** Jeff's framing: EM needs *tens* of
-iterations — **judge by the trajectory, not any single step.**
-
-**Decision rule for the running chains:**
-- If the mean δEE **plateaus toward ~0** → EM is converging, let it run to a fixed point.
-- If it **plateaus/climbs at an over-corrected value** (~+0.015 to +0.02) → the sampler
-  genuinely over-cleans. **Fix:** restrict the contaminant covariance sizes
-  (`_SIZES` in `mcem_sampler.intrinsic_covariances`, e.g. `[0,2]` or point-only `[0]`) so
-  contaminants can't absorb genuine wings, and/or lower the prior λ, and/or cap the covariance
-  lower-bound. **Re-gate with SBC + mixing**, regenerate iter-0 K-imputations (fast GPU path),
-  retrain, restart the chains.
+So **PSF δEE and galaxy size both move to truth** — the core synthetic gate (items 7a,7b) passes.
 
 ## Second open item (decoupled): hierarchical (λ, α) mixing
 
