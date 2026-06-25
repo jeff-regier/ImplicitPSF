@@ -71,7 +71,7 @@ def truth_stamps(field, x, y, color):
     return stamps
 
 
-def implicit_grid_stamps(model, data, index, fit_mask, x, y, ref_color):
+def implicit_grid_stamps(model, data, index, fit_mask, x, y, ref_color, query_flux=None):
     batch = make_batch(data, [index])
     # restrict context to exactly the stars the baselines fit on
     batch = dict(batch)
@@ -79,7 +79,8 @@ def implicit_grid_stamps(model, data, index, fit_mask, x, y, ref_color):
     batch["flux"] = batch["flux"] * keep.unsqueeze(0)
     queries = torch.from_numpy(np.column_stack([x, y])).float()
     colors = torch.full((len(x),), ref_color)
-    return render_at(model, batch, queries, colors).numpy()
+    qf = None if query_flux is None else torch.full((len(x),), float(query_flux))
+    return render_at(model, batch, queries, colors, query_fluxes=qf).numpy()
 
 
 def evaluate_exposure(model, data, index, reserved_ids, workdir, methods):

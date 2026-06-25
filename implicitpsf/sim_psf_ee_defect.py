@@ -32,7 +32,7 @@ def ee_within(stamps, center):
     return stamps[:, mask].sum(1) / flux
 
 
-def exposure_deficit(model, data, index, reserved_ids):
+def exposure_deficit(model, data, index, reserved_ids, query_flux=None):
     """Per-position (EE_model, EE_truth) at star-free grid points for one exposure."""
     clean, reserved = exposure_masks(data, index, reserved_ids)
     fit_mask = clean & ~reserved
@@ -42,7 +42,7 @@ def exposure_deficit(model, data, index, reserved_ids):
     field = {"chromatic": False, **data["true_field"][index]}
     ref_color = COLOR_MEAN if field["chromatic"] else 0.0
     truth = truth_stamps(field, x, y, ref_color)
-    model_stamps = implicit_grid_stamps(model, data, index, fit_mask, x, y, ref_color)
+    model_stamps = implicit_grid_stamps(model, data, index, fit_mask, x, y, ref_color, query_flux)
     ee_m, ee_t = [], []
     for k in range(len(x)):
         t = truth[k]
@@ -55,9 +55,9 @@ def exposure_deficit(model, data, index, reserved_ids):
     return np.array(ee_m), np.array(ee_t)
 
 
-def run(checkpoint, manifest_path, data_dir, psf_model, max_exposures):
+def run(checkpoint, manifest_path, data_dir, psf_model, max_exposures, query_flux=None):
     set_psf_model(psf_model)
-    model = load_model(checkpoint)
+    model = load_model(checkpoint, device="cuda")
     manifest = load_manifest(manifest_path)
     test = [
         (eid, info)
@@ -68,7 +68,7 @@ def run(checkpoint, manifest_path, data_dir, psf_model, max_exposures):
     for exposure_id, info in test:
         data = load_exposure_file(f"{data_dir}/{info['file']}")
         reserved_ids = reserved_star_ids(manifest, exposure_id)
-        out = exposure_deficit(model, data, info["index"], reserved_ids)
+        out = exposure_deficit(model, data, info["index"], reserved_ids, query_flux)
         if out is None:
             continue
         ee_m.append(out[0])
@@ -92,8 +92,11 @@ def main():
     parser.add_argument("--data-dir", required=True)
     parser.add_argument("--psf-model", default="realistic")
     parser.add_argument("--max-exposures", type=int, default=8)
+    parser.add_argument("--query-flux", type=float, default=None,
+                        help="render the model PSF at this fixed flux (clean-limit test)")
     args = parser.parse_args()
-    run(args.checkpoint, args.manifest, args.data_dir, args.psf_model, args.max_exposures)
+    run(args.checkpoint, args.manifest, args.data_dir, args.psf_model, args.max_exposures,
+        args.query_flux)
 
 
 if __name__ == "__main__":
