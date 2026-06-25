@@ -47,7 +47,9 @@ concentration to truth in controlled simulations, where contamination is the onl
 flux-dependent effect---and a Monte Carlo EM that infers and subtracts each star's
 contaminant posterior supplies the principled per-star correction and a calibrated
 contamination model.
-\placeholder{real-data size-deficit reduction after correction.}
+On real data the same query brings the predicted PSF size to within $1\%$ of bright clean
+stars---from a ${\sim}13\%$ second-moment excess at the median flux---and reduces the
+recovered galaxy-size bias toward the protocol floor.
 Color conditioning further removes a chromatic PSF-size systematic
 that the baselines retain, and the model stays accurate in star-sparse exposures where
 \textsc{PIFF} degrades sharply. Controlled simulations motivate two training choices: a
@@ -648,26 +650,26 @@ recovery is unstable below a few thousand exposures; real DES is well above this
 (ii)~the simulation's idealized PSF (Moffat, low-order polynomial field) favors the
 per-exposure baselines, so absolute-accuracy comparisons rest on real data; and
 (iii)~the galaxy-context finding argues that a PSF estimator's context should be gated to
-point sources, which we adopt. (iv)~The model slightly \emph{under-concentrates} the PSF
-core: rendered at a fiducial flux its second-moment size is accurate, but it carries
-${\sim}2\%$ less encircled energy in the central few pixels than the empirical PSF, which
-biases recovered galaxy sizes a few percent low (\S\ref{sec:galrec}). Higher-capacity coordinate
-encodings reduce it: widening the decoder's Fourier frequency basis cuts the encircled-energy
-residual at $r{=}2$\,px (${\sim}2\%\to0.1\%$) and the galaxy-size bias by ${\sim}30\text{--}50\%$,
-and an explicit analytic core does likewise, indicating an under-resolution component. It is,
-however, \emph{specific to real data}: controlled simulations with known PSFs do not reproduce the
-deficit at any decoder capacity, ruling out a generic spectral-bias limitation of the
-multilayer-perceptron decoder. We identify faint-neighbour contamination of the
-training stars as a---likely the dominant---cause: it reproduces the under-concentration in
-simulation, and the Monte Carlo EM of \S\ref{sec:mcem}, which infers and subtracts each star's
-contaminant posterior before refitting, removes it there, returning the PSF concentration and the
-recovered galaxy sizes to truth (\S\ref{sec:sim}). The identical cleaner and sampler apply to the
-real training stars; \placeholder{real-data outcome of the correction.} It is the main residual
-systematic to address before a shear analysis. A separate, milder effect appears only in the
-reserved-star metric (Fig.~\ref{fig:residmag}): evaluated at each star's \emph{own} flux,
-$\delta T/T$ rises to ${\sim}{+}1.2\%$ at faint magnitudes, a spurious flux--size trend in
-the conditioning; because the inferential PSF is rendered at a fiducial flux, this does not
-propagate to galaxy measurement.
+point sources, which we adopt. (iv)~The model's predicted PSF \emph{size depends on the
+flux at which it is queried}: it conditions on flux and has learned, from training stars
+that carry faint unresolved neighbours, that fainter stars are more fractionally
+contaminated and hence broader, so its predicted PSF narrows toward the clean PSF as the
+query flux rises. Queried at the median star flux---which a naive galaxy-recovery render
+uses---the predicted PSF is contamination-broadened (a second-moment size ${\sim}13\%$
+large, ${\sim}2\%$ low in central encircled energy, relative to bright clean stars) and
+biases recovered galaxy sizes a few percent low; queried at the clean high-flux limit it
+matches bright clean stars to $1\%$, the size residual falling from $+13\%$ to $0\%$ across
+the flux range, and the galaxy-size bias largely vanishes (\S\ref{sec:galrec}). The
+flux--size trend is visible directly in the reserved-star metric (Fig.~\ref{fig:residmag}),
+$\delta T/T$ rising at faint magnitudes. Controlled simulations with known truth confirm the
+mechanism and that the clean-flux PSF is the true one ($\delta\mathrm{EE}$ from $-0.0078$ to
+$-0.0014$; \S\ref{sec:sim}), and the effect is absent at any decoder capacity in clean
+simulations, ruling out a generic spectral-bias limitation of the decoder. We identify
+faint-neighbour contamination of the nominally-clean training stars as the cause; the Monte
+Carlo EM of \S\ref{sec:mcem} removes it explicitly and per-star, supplying a calibrated
+contamination model and cleaning the residual. The practical prescription---render the
+inferential PSF at the clean-flux limit---removes most of this, the main residual systematic
+to control before a shear analysis.
 
 \section{Conclusion} \label{sec:conclusion}
 
@@ -675,10 +677,14 @@ A single attention-based continuous PSF field, trained across DES single-epoch e
 and applied with no per-exposure fitting, matches or exceeds \textsc{PIFF} and
 \textsc{PSFEx} on real reserved stars and recovers galaxy ellipticity without coherent
 bias (on par with \textsc{PIFF}) on a star-anchored injection test, while additionally
-correcting a chromatic systematic and remaining robust in star-sparse exposures. Controlled simulations motivate
-two training choices: a blend forward-model loss and point-source-only attention
-context. The latter follows from diagnosing a spin-2 representation failure triggered
-by galaxy detections in context.
+correcting a chromatic systematic and remaining robust in star-sparse exposures. The one
+residual---recovered galaxy sizes a few percent small---we trace to the flux at which the
+PSF is queried: the flux-conditioned model has learned that fainter stars are more
+contaminated, so rendering the PSF at the clean high-flux limit removes most of the bias,
+with a Monte Carlo EM providing the principled per-star contamination correction. Controlled
+simulations motivate two further training choices: a blend forward-model loss and
+point-source-only attention context. The latter follows from diagnosing a spin-2
+representation failure triggered by galaxy detections in context.
 
 \begin{acknowledgments}
 This material is based on work supported by the National Science Foundation under Grant
