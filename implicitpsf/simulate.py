@@ -49,6 +49,11 @@ def set_bright_tail(on):
     _BRIGHT_TAIL["on"] = bool(on)
 
 
+def set_selection_aware(on):
+    """Enable host-flux-dependent contaminant flagging (the selection bias); call before fork."""
+    _SELECTION_AWARE["on"] = bool(on)
+
+
 def sample_star_fluxes(rng, n):
     """Log-uniform bulk on FLUX_RANGE; with --bright-tail, a BRIGHT_TAIL_FRAC fraction is redrawn
     log-uniform up to BRIGHT_FLUX_MAX so the sim spans real's full dynamic range."""
@@ -213,6 +218,12 @@ CONTAM_FLUX_CEIL = 6000.0  # brightest neighbour drawn (~3x the single-epoch det
 CONTAM_FLAG_LIMIT = 2000.0  # single-epoch detection limit: a host with a brighter neighbour is
 # SEP-flagged and dropped from the clean sample (the real-pipeline filter that protects PIFF)
 CONTAM_PROB_GALAXY = 0.58  # DES fraction of detections that are galaxies (vs stars)
+# --selection-aware: the flag threshold rises with host brightness (a neighbour is harder to detect
+# next to a bright star -> bright clean survivors retain MORE masked contamination). threshold =
+# CONTAM_FLAG_LIMIT * sqrt(host_flux / FLAG_FLUX_REF) (Poisson-noise scaling). Tests whether the
+# flux query still recovers truth when the real selection bias (Jeff) is present.
+FLAG_FLUX_REF = 35000.0  # ~median star flux: a host here keeps the unmodified CONTAM_FLAG_LIMIT
+_SELECTION_AWARE = {"on": False}  # mutable holder (fork workers inherit it)
 
 
 def sample_power_law(rng, n, lo, hi, exponent):
@@ -236,14 +247,16 @@ def _render_contaminants(image, field, cx, cy, cflux, ccolor, is_galaxy, rng):
         render_galaxy(image, field, cx[k], cy[k], cflux[k], ccolor[k], re_pix[j], sersic[j], g1, g2)
 
 
-def inject_contaminants(image, field, x, y, rng, rate):
+def inject_contaminants(image, field, x, y, host_flux, rng, rate):
     """Render undetectable faint neighbours (stars+galaxies, power-law fluxes) into star stamps.
 
     A Poisson(rate) number of faint field sources per stamp (rate ~ r-band counts, ~1 per stamp) --
     un-deblendable blends that survive 'clean' selection and broaden the learned PSF. Returns, per
     star, whether it has a neighbour above the single-epoch detection limit: SEP would flag that
     host, so it is dropped from the clean sample (as in the real pipeline that feeds PIFF), leaving
-    only sub-threshold blends to contaminate the surviving clean stars.
+    only sub-threshold blends to contaminate the surviving clean stars. With --selection-aware the
+    flag threshold rises with host brightness (bright hosts mask neighbours), so bright survivors
+    keep more contamination -- the real selection bias.
     """
     flagged = np.zeros(len(x), dtype=bool)
     if rate <= 0.0:
@@ -259,7 +272,11 @@ def inject_contaminants(image, field, x, y, rng, rate):
     cflux = sample_power_law(rng, total, CONTAM_FLUX_FLOOR, CONTAM_FLUX_CEIL, CONTAM_FLUX_EXPONENT)
     ccolor = np.clip(rng.normal(COLOR_MEAN, COLOR_SCATTER, total), -0.5, 3.0)
     is_galaxy = rng.random(total) < CONTAM_PROB_GALAXY
-    np.logical_or.at(flagged, host, cflux > CONTAM_FLAG_LIMIT)
+    if _SELECTION_AWARE["on"]:
+        thresh = CONTAM_FLAG_LIMIT * np.sqrt(host_flux[host] / FLAG_FLUX_REF)
+    else:
+        thresh = CONTAM_FLAG_LIMIT
+    np.logical_or.at(flagged, host, cflux > thresh)
     _render_contaminants(image, field, cx, cy, cflux, ccolor, is_galaxy, rng)
     return flagged
 
@@ -339,7 +356,7 @@ def simulate_exposure(
     image = galsim.Image(WIDTH, HEIGHT, scale=PIXEL_SCALE, dtype=np.float32)
     for x0, y0, flux0, color0 in zip(x, y, flux, color, strict=True):
         render_star(image, field, x0, y0, flux0, color0)
-    flagged = inject_contaminants(image, field, x, y, rng, contam_rate)
+    flagged = inject_contaminants(image, field, x, y, flux, rng, contam_rate)
 
     gal = sample_galaxies(rng, n_galaxies)
     gal_cols = zip(
@@ -565,9 +582,16 @@ def main():
         help="extend clean-star flux to real's bright tail (~9%% up to 6.4e6) to exercise the "
         "high-dynamic-range regime in simulation (truth known) before/with real data",
     )
+    parser.add_argument(
+        "--selection-aware",
+        action="store_true",
+        help="host-flux-dependent contaminant flagging (bright hosts mask neighbours) -- the real "
+        "selection bias; tests whether the flux query still recovers truth under it",
+    )
     args = parser.parse_args()
     set_psf_model(args.psf_model)
     set_bright_tail(args.bright_tail)  # before forking workers (they inherit the holder)
+    set_selection_aware(args.selection_aware)
     fits_seeds = first_test_seeds(args.n_exposures, args.n_test_fits)
 
     Path(args.out_dir).mkdir(parents=True, exist_ok=True)
