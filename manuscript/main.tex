@@ -389,8 +389,8 @@ predicts the PSF there from the \emph{other} stars and recovers the galaxy. Reco
 with the true PSF (the anchor's own image) sets the protocol floor: near-zero ellipticity
 bias and a residual $-1.2\%$ size bias---not a true zero, but the discretization floor of
 the recovery forward model---against which the predicted PSFs are scored.
-On 32 $r$-band test exposures (170 anchors; Table~\ref{tab:galrec}), all three methods recover galaxy
-\emph{ellipticity} with low bias ($|\Delta e_1|\lesssim0.013$): the pixel-convolved
+On 32 $r$-band test exposures (640 anchors; Table~\ref{tab:galrec}), all three methods recover galaxy
+\emph{ellipticity} with low bias ($|\Delta e_1|\lesssim0.016$): the pixel-convolved
 effective PSF carries the PSF ellipticity faithfully into the forward model, so no method
 imprints a coherent shape error on the recovered galaxies, the weak-lensing-critical
 property, which our model satisfies on par with the per-exposure baselines. The methods
@@ -426,7 +426,7 @@ the consequential quantity for shear, is unbiased throughout.
 \centering
 \includegraphics[width=0.75\textwidth]{figures/fig_galrec.pdf}
 \caption{Galaxy recovery on real data (star-anchored injection), median $\pm$ bootstrap 95\%
-CI per PSF. Left: recovered ellipticity is low-bias ($|\Delta e_1|\lesssim0.013$) for all
+CI per PSF. Left: recovered ellipticity is low-bias ($|\Delta e_1|\lesssim0.016$) for all
 three methods. Right: recovered \emph{size}. Queried at the median flux our model runs small
 (contamination-broadening of the predicted PSF); queried at the clean high-flux limit it
 recovers to near the true-PSF floor (\S\ref{sec:galrec}). \textsc{PIFF} is shown for
@@ -436,17 +436,18 @@ reference.\label{fig:galrec}}
 
 
 \begin{deluxetable}{lccc}
-\tablecaption{Star-anchored galaxy injection--recovery (32 $r$-band test exposures, 170 anchors). The
+\tablecaption{Star-anchored galaxy injection--recovery (32 $r$-band test exposures, 640 anchors). The
 true-PSF recovery sets the protocol floor. All methods recover ellipticity with low bias;
-they separate on recovered size. Our model is rendered here at the median query flux; the
-size deficit is largely a query-flux effect and is removed at the clean flux
-(Table~\ref{tab:fluxsize}, \S\ref{sec:galrec}).\label{tab:galrec}}
+they separate on recovered size. Rendering our model's PSF at the median query flux leaves
+a size deficit (contamination-broadening, \S\ref{sec:galrec}); at the clean high-flux limit
+it is largely removed (Table~\ref{tab:fluxsize}).\label{tab:galrec}}
 \tablehead{\colhead{PSF} & \colhead{Size bias} & \colhead{$\Delta e_1$} &
 \colhead{$\Delta e_2$}}
 \startdata
-True PSF            & $-1.2\%$ & $-0.009$ & $-0.000$ \\
-\textbf{Neural PSF (ours)}  & $-7.6\%$ & $-0.005$ & $-0.000$ \\
-\textsc{PIFF}       & $+1.1\%$ & $-0.013$ & $-0.003$ \\
+True PSF                          & $-1.3\%$ & $-0.009$ & $+0.004$ \\
+Neural PSF (median flux)          & $-5.8\%$ & $-0.006$ & $+0.005$ \\
+\textbf{Neural PSF (clean flux)}  & $-2.2\%$ & $-0.011$ & $+0.005$ \\
+\textsc{PIFF}                     & $+1.3\%$ & $-0.016$ & $+0.003$ \\
 \enddata
 \end{deluxetable}
 
