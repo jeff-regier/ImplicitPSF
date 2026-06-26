@@ -513,7 +513,14 @@ the clean high-flux limit---with no cleaning at all---drives $\delta\mathrm{EE}$
 $-0.0078$ to $-0.0014$, i.e.\ essentially onto truth. This is the controlled,
 truth-anchored counterpart of the real-data flux query in \S\ref{sec:galrec}, confirming
 against known truth that the model's bright-limit PSF is the clean one and that the deficit
-is the contamination the flux-conditioned model has implicitly learned to separate.
+is the contamination the flux-conditioned model has implicitly learned to separate. This
+survives a deliberately adversarial test of the real selection: when the detectability
+threshold is made to rise with host brightness---so that bright ``clean'' survivors retain
+\emph{more} masked contamination, as the real SEP filter allows---the flux query still
+recovers truth ($\delta\mathrm{EE}=-0.0059\to-0.0005$ from median to clean flux). The query
+relies only on bright stars being \emph{fractionally} cleaner, which holds even when their
+retained neighbours are absolutely brighter, so the recovery is not an artifact of assuming
+bright stars are perfectly clean.
 
 \paragraph{Galaxy-context corrupts PSF ellipticity---and the fix} Injecting galaxy
 detections into the simulation, a model that attends to \emph{all} detections (including
