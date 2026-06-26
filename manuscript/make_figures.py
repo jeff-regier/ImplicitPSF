@@ -213,8 +213,8 @@ def fig_galrec():
     """Galaxy recovery (star-anchored injection): ellipticity is recovered without bias by all
     methods (left); on size (right) our model runs small when its PSF is queried at the median
     flux but recovers at the clean high-flux limit, where contamination-broadening is gone."""
-    dd = pd.read_parquet("results/galrec_solid_real_default.parquet")
-    dc = pd.read_parquet("results/galrec_solid_real_clean.parquet")
+    dd = pd.read_parquet("results/galrec_largeN_real_default.parquet")
+    dc = pd.read_parquet("results/galrec_largeN_real_clean.parquet")
     rows = [
         (dd, "truth", "k", "True PSF"),
         (dd, "implicit", "C3", "Neural PSF (median flux)"),
